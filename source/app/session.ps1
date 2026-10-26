@@ -10,6 +10,18 @@ function Get-WorkdayMonthLabels([DateTime]$Now = (Get-Date)) {
     $first = New-Object DateTime($Now.Year, $Now.Month, 1)
     for ($i = 0; $i -lt 60; $i++) { $first.AddMonths(-$i).ToString('yyyy년 MM월') }
 }
+function Start-WorkdayHiddenProcess([string]$FileName, [string]$Arguments = '', [string]$WorkingDirectory = $PSScriptRoot, [switch]$CaptureError) {
+    $process = New-Object Diagnostics.Process
+    $process.StartInfo = New-Object Diagnostics.ProcessStartInfo
+    $process.StartInfo.FileName = $FileName
+    $process.StartInfo.Arguments = $Arguments
+    $process.StartInfo.WorkingDirectory = $WorkingDirectory
+    $process.StartInfo.UseShellExecute = $false
+    $process.StartInfo.CreateNoWindow = $true
+    $process.StartInfo.RedirectStandardError = [bool]$CaptureError
+    if (-not $process.Start()) { $process.Dispose(); throw '작업을 시작하지 못했습니다.' }
+    return $process
+}
 function Write-WorkdayText([string]$Path, [string]$Text) {
     $temporary = $Path + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
     [IO.File]::WriteAllText($temporary, $Text, (New-Object Text.UTF8Encoding($false)))

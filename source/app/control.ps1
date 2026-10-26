@@ -13,6 +13,7 @@ $Python = Join-Path $CurrentInstallRoot "runtime\python.exe"
 $MainScript = Join-Path $CurrentInstallRoot "main.py"
 $script:CurrentSettings = $null
 . (Join-Path $PSScriptRoot 'session.ps1')
+. (Join-Path $PSScriptRoot 'task-control.ps1')
 
 if (Test-Path -LiteralPath $SettingsFile) {
     try { $script:CurrentSettings = Get-Content -LiteralPath $SettingsFile -Raw -Encoding UTF8 | ConvertFrom-Json } catch {}
@@ -142,18 +143,16 @@ if ($script:CurrentSettings -and $script:CurrentSettings.time_step_minutes -eq 1
 $timeGroup.Controls.Add($stepBox)
 
 function Update-Status {
-    $parts = foreach ($name in $TaskNames) {
-        $task = Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
-        if (-not $task) { "${name}: 미등록"; continue }
-        $stateText = switch ($task.State.ToString()) {
-            "Disabled" { "정지됨" }
-            "Running" { "실행 중" }
-            "Ready" { "사용 중" }
-            default { $task.State.ToString() }
-        }
-        "${name}: $stateText"
-    }
-    $status.Text = $parts -join "`n"
+    Start-ControlOperation 'status'
+}
+function Start-ControlOperation([string]$Action, $Previous = $null) {
+    if ($script:TaskJob -and $Action -eq 'status') { return }
+    if ($Action -ne 'status') {
+        foreach ($button in @($saveButton,$pauseButton,$resumeButton,$deleteButton,$refreshButton)) { $button.Enabled=$false }
+        $status.Text = switch ($Action) { 'register' {'설정 저장 및 예약 등록 중…'}; 'pause' {'예약 작업과 자동 실행을 정지하는 중…'}; 'resume' {'예약 작업과 자동 실행을 다시 시작하는 중…'} }
+    } else { $status.Text = '예약 작업 상태를 확인하는 중…' }
+    if ($script:TaskJob) { $script:QueuedOperation=@{action=$Action;previous=$Previous}; return }
+    $script:TaskJob=Start-WorkdayTaskJob $script:TaskContext $CurrentInstallRoot $Action $Previous
 }
 
 function Set-AutomationEnabled([bool]$Enabled) {
@@ -190,26 +189,8 @@ $saveButton.Add_Click({
         if ($monthlyHours -gt 0 -and $values.checkout_end -ge '19:00') { throw '연장을 사용하는 경우 일반 퇴근 종료는 19:00 이전이어야 합니다.' }
         $settingsJson = $values | ConvertTo-Json
         Write-WorkdayText $SettingsFile $settingsJson
-        $registrationError = Join-Path $env:TEMP ("AutoAttendance-register-$PID.err.txt")
-        try {
-            $process = Start-Process -FilePath $Python -ArgumentList @("`"$MainScript`"", "--register-tasks") -WorkingDirectory $CurrentInstallRoot -WindowStyle Hidden -Wait -PassThru -RedirectStandardError $registrationError
-            if ($process.ExitCode -ne 0) {
-                $detail = Get-Content -LiteralPath $registrationError -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
-                throw "설정 검사 또는 예약 작업 등록에 실패했습니다.`n$detail"
-            }
-        } catch {
-            if ($null -ne $previousSettingsJson) {
-                Write-WorkdayText $SettingsFile $previousSettingsJson
-            } else {
-                Remove-Item -LiteralPath $SettingsFile -Force -ErrorAction SilentlyContinue
-            }
-            throw
-        } finally { Remove-Item -LiteralPath $registrationError -Force -ErrorAction SilentlyContinue }
         $script:CurrentSettings = [PSCustomObject]$values
-        $pwBox.Clear()
-        Update-Status
-        Start-WorkdayEngine
-        [Windows.Forms.MessageBox]::Show("ID/PW 저장과 자동 출퇴근 작업 등록이 완료되었습니다.", "등록 완료", "OK", "Information") | Out-Null
+        Start-ControlOperation 'register' $previousSettingsJson
     } catch {
         [Windows.Forms.MessageBox]::Show($_.Exception.Message, "등록 실패", "OK", "Error") | Out-Null
     }
@@ -224,15 +205,7 @@ $pauseButton.Add_Click({
     try {
         Set-AutomationEnabled $false
         Stop-WorkdayEngine
-        foreach ($name in $TaskNames) {
-            $task = Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
-            if ($task) {
-                if ($task.State -eq "Running") { Stop-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue }
-                Disable-ScheduledTask -TaskName $name | Out-Null
-            }
-        }
-        Update-Status
-        [Windows.Forms.MessageBox]::Show("자동 출퇴근을 일시 정지했습니다.", "정지 완료", "OK", "Information") | Out-Null
+        Start-ControlOperation 'pause'
     } catch { [Windows.Forms.MessageBox]::Show($_.Exception.Message, "정지 실패", "OK", "Error") | Out-Null }
 })
 $form.Controls.Add($pauseButton)
@@ -243,18 +216,7 @@ $resumeButton.Size = New-Object Drawing.Size(120, 42)
 $resumeButton.Location = New-Object Drawing.Point(167, 583)
 $resumeButton.Add_Click({
     try {
-        foreach ($name in $TaskNames) {
-            $task = Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
-            if (-not $task) { throw "예약 작업이 없습니다. 위의 저장 및 작업 등록 버튼을 먼저 눌러 주세요." }
-        }
-        Set-AutomationEnabled $true
-        Start-WorkdayEngine
-        foreach ($name in $TaskNames) {
-            Enable-ScheduledTask -TaskName $name | Out-Null
-        }
-        Start-ScheduledTask -TaskName '자동출퇴근로그인'
-        Update-Status
-        [Windows.Forms.MessageBox]::Show("자동 출퇴근을 다시 시작했습니다.", "시작 완료", "OK", "Information") | Out-Null
+        Start-ControlOperation 'resume'
     } catch { [Windows.Forms.MessageBox]::Show($_.Exception.Message, "시작 실패", "OK", "Error") | Out-Null }
 })
 $form.Controls.Add($resumeButton)
@@ -299,7 +261,7 @@ $saveButton.BackColor = $script:UiMint
 $pauseButton.BackColor = $script:UiOrange
 $deleteButton.BackColor = $script:UiInk
 $status.BackColor = [Drawing.Color]::White
-Update-Status
+$status.Text = '예약 작업 상태를 확인하는 중…'
 if ($SelfTest) {
     foreach ($control in $form.Controls) {
         if ($control.Right -gt $form.ClientSize.Width -or $control.Bottom -gt $form.ClientSize.Height) { throw '관리 화면 컨트롤이 창 경계를 벗어났습니다.' }
@@ -309,4 +271,34 @@ if ($SelfTest) {
     exit 0
 }
 if (-not (Enter-WorkdayUi 'control')) { $form.Dispose(); exit 0 }
-try { Show-WorkdayDialog $form $OwnerHandle } finally { Exit-WorkdayUi }
+$script:TaskContext=New-WorkdayTaskContext
+$script:TaskJob=$null; $script:QueuedOperation=$null
+$taskTimer=New-Object Windows.Forms.Timer
+$taskTimer.Interval=50
+$taskTimer.Add_Tick({
+    $job=$script:TaskJob
+    if(-not $job -or -not $job.pending.IsCompleted){return}
+    try {
+        $results=@($job.pipeline.EndInvoke($job.pending))
+        if($job.pipeline.HadErrors){throw $job.pipeline.Streams.Error[0].Exception}
+        $result=$results[-1]
+        $status.Text=if($result.message){$result.message}else{$result.lines -join "`n"}
+        if($job.action -eq 'register'){$pwBox.Clear()}
+    } catch {
+        $status.Text='처리 확인: '+$_.Exception.Message
+        if($job.action -ne 'status'){[void][Windows.Forms.MessageBox]::Show($form,$_.Exception.Message,'처리 확인')}
+        if(Test-Path -LiteralPath $SettingsFile){$script:CurrentSettings=Get-Content -LiteralPath $SettingsFile -Raw -Encoding UTF8|ConvertFrom-Json}
+    } finally {
+        $job.pipeline.Dispose(); $script:TaskJob=$null
+        foreach($button in @($saveButton,$pauseButton,$resumeButton,$deleteButton,$refreshButton)){$button.Enabled=$true}
+    }
+    if($script:QueuedOperation){$next=$script:QueuedOperation;$script:QueuedOperation=$null;Start-ControlOperation $next.action $next.previous}
+})
+$form.Add_Shown({Update-Status;$taskTimer.Start()})
+$form.Add_FormClosing({if($script:QueuedOperation -or ($script:TaskJob -and $script:TaskJob.action -ne 'status')){$_.Cancel=$true}})
+try { Show-WorkdayDialog $form $OwnerHandle } finally {
+    $taskTimer.Dispose()
+    if($script:TaskJob){$script:TaskJob.pipeline.Stop();$script:TaskJob.pipeline.Dispose()}
+    $script:TaskContext.Dispose()
+    Exit-WorkdayUi
+}

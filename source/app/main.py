@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import calendar
+import base64
 import json
 import os
 import random
@@ -19,6 +20,8 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from webdriver_manager.chrome import ChromeDriverManager
+from webdriver_manager.core.driver_cache import DriverCacheManager
+from webdriver_manager.core.os_manager import OperationSystemManager
 
 SOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
 # The official embeddable runtime uses an isolated ._pth search path. Explicitly
@@ -219,13 +222,34 @@ def choose_target(mode, today, state):
     return target, action_state
 
 
+class QuietChromeOSManager(OperationSystemManager):
+    """Read Chrome's version without webdriver-manager's console shell probes."""
+    def get_browser_version_from_os(self, browser_type=None):
+        if hasattr(self, '_chrome_version'):
+            return self._chrome_version
+        paths = [os.path.join(os.environ[name], 'Google', 'Chrome', 'Application', 'chrome.exe')
+                 for name in ('ProgramFiles', 'ProgramFiles(x86)', 'LOCALAPPDATA') if os.environ.get(name)]
+        expressions = ["$v=(Get-Item -LiteralPath '" + path.replace("'", "''") + "').VersionInfo.FileVersion; if($v){$v;exit}" for path in paths]
+        script = "$ErrorActionPreference='SilentlyContinue';" + ';'.join(expressions)
+        encoded = base64.b64encode(script.encode('utf-16le')).decode('ascii')
+        result = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+                                timeout=15, creationflags=subprocess.CREATE_NO_WINDOW)
+        match = re.search(r'\d+\.\d+\.\d+(?:\.\d+)?', result.stdout)
+        self._chrome_version = match.group(0) if match else None
+        return self._chrome_version
+
+
 def create_driver():
     if os.path.exists(DRIVER_PATH):
         try:
-            return webdriver.Chrome(service=Service(DRIVER_PATH))
+            return webdriver.Chrome(service=Service(DRIVER_PATH, popen_kw={"creation_flags": subprocess.CREATE_NO_WINDOW}))
         except Exception as bundled_error:
             log_event(f"포함된 ChromeDriver 사용 실패, 자동 갱신 시도: {bundled_error}")
-    return webdriver.Chrome(service=Service(ChromeDriverManager().install()))
+    os_manager = QuietChromeOSManager()
+    cache = DriverCacheManager(os_system_manager=os_manager)
+    path = ChromeDriverManager(cache_manager=cache, os_system_manager=os_manager).install()
+    return webdriver.Chrome(service=Service(path, popen_kw={"creation_flags": subprocess.CREATE_NO_WINDOW}))
 
 
 def recovery_target(day):
@@ -490,6 +514,7 @@ def register_tasks():
     validate_overtime_capacity(config, date.today())
     start_in, _, start_out, _, _ = time_settings(config)
     guardian = os.path.join(SOURCE_DIR, 'WorkdayGuard.exe').replace("'", "''")
+    commands = ["$ErrorActionPreference='Stop'"]
 
     definitions = [("자동출근", f"{start_in // 60:02}:{start_in % 60:02}"), ("자동퇴근", f"{start_out // 60:02}:{start_out % 60:02}")]
     for task_name, start_time in definitions:
@@ -501,10 +526,7 @@ def register_tasks():
             "$settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries; "
             f"Register-ScheduledTask -TaskName '{task_name}' -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null"
         )
-        subprocess.run(
-            ["powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", command],
-            check=True, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW,
-        )
+        commands.append(command)
 
     # AtLogOn runs as the installing user: the browser needs an interactive session.
     command = (
@@ -515,21 +537,17 @@ def register_tasks():
         "$settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries; "
         "Register-ScheduledTask -TaskName '자동출퇴근로그인' -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null"
     )
-    subprocess.run(
-        ["powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", command],
-        check=True, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW,
-    )
-    watchdog = os.path.join(SOURCE_DIR, 'watchdog.ps1').replace("'", "''")
+    commands.append(command)
     command = (
         "$user=[Security.Principal.WindowsIdentity]::GetCurrent().Name; "
-        f"$action=New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '-NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File \"{watchdog}\"'; "
+        f"$action=New-ScheduledTaskAction -Execute '{guardian}' -Argument '--watchdog'; "
         "$triggers=@((New-ScheduledTaskTrigger -AtLogOn -User $user),(New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5))); "
         "$principal=New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited; "
         "$settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 2) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries; "
         "Register-ScheduledTask -TaskName '자동출퇴근점검' -Action $action -Trigger $triggers -Settings $settings -Principal $principal -Force | Out-Null"
     )
     subprocess.run(
-        ["powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", command],
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", '; '.join(commands + [command])],
         check=True, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW,
     )
 

@@ -140,7 +140,7 @@ function Invoke-OvertimeJob($Job) {
     $script:jobPath = Join-Path $dataRoot ("overtime-job-{0}.json" -f [Guid]::NewGuid().ToString('N'))
     [IO.File]::WriteAllText($script:jobPath, ($Job | ConvertTo-Json -Depth 8), (New-Object Text.UTF8Encoding($false)))
     $script:operation = $Job.operation
-    $script:worker = Start-Process -FilePath $python -ArgumentList @("`"$mainScript`"", '--overtime-job', "`"$script:jobPath`"") -WorkingDirectory $PSScriptRoot -WindowStyle Hidden -PassThru
+    $script:worker = Start-WorkdayHiddenProcess $python "`"$mainScript`" --overtime-job `"$script:jobPath`"" $PSScriptRoot
     $scan.Enabled = $false; $submit.Enabled = $false; $monthPicker.Enabled = $false
     $idBox.Enabled = $false; $pwBox.Enabled = $false; $grid.Enabled = $false
     $statusLabel.Text = '사이트 처리 중입니다. 완료될 때까지 기다려 주세요.'

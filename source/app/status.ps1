@@ -37,7 +37,7 @@ function Update-WorkdayStatus {
             } catch { $lines += "$($spec[1]): 상태를 읽는 중입니다." }
         } else { $lines += "$($spec[1]): 아직 실행 기록이 없습니다." }
     }
-    if (Test-Path -LiteralPath (Join-Path $data 'automation.stop')) { $lines += '사용자 종료 상태: 자동 재실행하지 않습니다. 다시 시작하려면 자동 실행 시작을 누르세요.' }
+    if (Test-Path -LiteralPath (Join-Path $data 'automation.stop')) { $lines += '사용자 정지 상태: 자동 재실행하지 않습니다. 근태 자동관리 설정에서 다시 시작을 누르세요.' }
     $status.Text = $lines -join "`r`n"
     $text = @()
     foreach ($name in @('guardian.log','자동출퇴근.log','restart-failed.notice.txt')) {

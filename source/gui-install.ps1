@@ -105,7 +105,12 @@ try {
     $detail.Text = "설정 및 관리 창을 여는 중입니다."
     [Windows.Forms.Application]::DoEvents()
     $form.Hide()
-    $control = Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -ArgumentList @("-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", "`"$ControlScript`"") -WindowStyle Hidden -PassThru
+    $controlInfo = New-Object Diagnostics.ProcessStartInfo
+    $controlInfo.FileName = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+    $controlInfo.Arguments = "-NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$ControlScript`""
+    $controlInfo.UseShellExecute = $false
+    $controlInfo.CreateNoWindow = $true
+    $control = [Diagnostics.Process]::Start($controlInfo)
     if ($control.WaitForExit(800) -and $control.ExitCode -ne 0) { throw "설정 및 관리 창 실행에 실패했습니다." }
 } catch {
     $selfTestFailed = $true

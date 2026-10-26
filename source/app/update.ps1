@@ -9,6 +9,17 @@
     } finally { $rsa.PersistKeyInCsp = $false; $rsa.Dispose() }
 }
 function Get-WorkdayUpdateOffer([string]$Root) {
+    $migration = Join-Path $Root 'dist\native-watchdog-v14.done'
+    if (-not (Test-Path -LiteralPath $migration)) {
+        try {
+            . (Join-Path $Root 'task-control.ps1')
+            Repair-WorkdayWatchdogTask $Root
+            New-Item -ItemType Directory -Path (Join-Path $Root 'dist') -Force | Out-Null
+            [IO.File]::WriteAllText($migration, (Get-Date).ToString('o'))
+        } catch {
+            try { [IO.File]::AppendAllText((Join-Path $Root 'dist\ui-errors.log'), ((Get-Date).ToString('o') + ' watchdog migration: ' + $_.Exception.Message + "`r`n")) } catch {}
+        }
+    }
     $config = Get-Content -LiteralPath (Join-Path $Root 'update-config.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     if (-not $config.enabled -or ([Uri]$config.manifest_url).Scheme -ne 'https') { throw '자동 업데이트 주소를 확인할 수 없습니다.' }
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12

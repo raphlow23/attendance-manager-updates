@@ -5,7 +5,7 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 $form = New-Object Windows.Forms.Form
 $form.Text = '근태매니저'
-$form.Size = New-Object Drawing.Size(860, 645)
+$form.Size = New-Object Drawing.Size(860, 550)
 $form.StartPosition = 'CenterScreen'
 $form.FormBorderStyle = 'FixedDialog'
 $form.MaximizeBox = $false
@@ -20,16 +20,19 @@ $title.TextAlign = 'MiddleLeft'
 $title.BackColor = [Drawing.ColorTranslator]::FromHtml('#343C46')
 $title.ForeColor = [Drawing.Color]::White
 $form.Controls.Add($title)
-$script:FeatureProcesses = New-Object Collections.ArrayList
+. (Join-Path $PSScriptRoot 'ui-host.ps1')
+$script:FeatureHosts = @{}
 function Open-Feature([string]$Name) {
+    if ($Name -ne 'launcher.ps1') {
+        $hint.Text = '선택한 화면을 여는 중입니다…'
+        Open-WorkdayFeatureHost $script:FeatureHosts $Name $form.Handle.ToInt64()
+        [void](Update-WorkdayFeatureHosts $script:FeatureHosts)
+        return
+    }
     $arguments = @('-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', "`"$(Join-Path $PSScriptRoot $Name)`"")
     if ($Name -ne 'launcher.ps1') { $arguments += @('-OwnerHandle', $form.Handle.ToInt64()) }
-    $child = Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -ArgumentList $arguments -WindowStyle Hidden -PassThru
-    if ($Name -ne 'launcher.ps1') {
-        [void]$script:FeatureProcesses.Add($child)
-        Initialize-WorkdayWindows
-        [void][WorkdayWindowOwner]::AllowSetForegroundWindow($child.Id)
-    }
+    $child = Start-WorkdayHiddenProcess "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" ($arguments -join ' ')
+    $child.Dispose()
 }
 $attendance = New-Object Windows.Forms.Button
 $attendance.Text = '근태 자동관리 설정'
@@ -44,31 +47,21 @@ $overtime.Size = New-Object Drawing.Size(345, 52)
 $overtime.Add_Click({ Open-Feature 'overtime.ps1' })
 $form.Controls.Add($overtime)
 $hint = New-Object Windows.Forms.Label
-$hint.Text = '이 창을 닫아도 자동 실행은 유지됩니다. 멈추려면 자동 실행 종료를 누르세요.'
-$hint.Location = New-Object Drawing.Point(25, 537)
+$hint.Text = '자동 실행을 멈추거나 재개하려면 근태 자동관리 설정을 열어 주세요.'
+$hint.Location = New-Object Drawing.Point(25, 437)
 $hint.Size = New-Object Drawing.Size(795, 40)
 $hint.TextAlign = 'MiddleCenter'
 $form.Controls.Add($hint)
 $security = New-Object Windows.Forms.Button
 $security.Text = '실행 차단 / 보안 안내'
 $security.Location = New-Object Drawing.Point(30, 378)
-$security.Size = New-Object Drawing.Size(785, 42)
+$security.Size = New-Object Drawing.Size(385, 42)
 $security.Add_Click({ Open-Feature '보안안내.ps1' })
 $form.Controls.Add($security)
 . (Join-Path $PSScriptRoot 'session.ps1')
-$startEngine = New-Object Windows.Forms.Button
-$startEngine.Text = '자동 실행 시작'
-$startEngine.Location = New-Object Drawing.Point(30, 431); $startEngine.Size = New-Object Drawing.Size(385, 42)
-$startEngine.Add_Click({ try { Start-WorkdayEngine } catch { [void][Windows.Forms.MessageBox]::Show($_.Exception.Message, '시작 확인') } })
-$form.Controls.Add($startEngine)
-$stopEngine = New-Object Windows.Forms.Button
-$stopEngine.Text = '자동 실행 종료 (재실행 안 함)'
-$stopEngine.Location = New-Object Drawing.Point(430, 431); $stopEngine.Size = New-Object Drawing.Size(385, 42)
-$stopEngine.Add_Click({ Stop-WorkdayEngine; [void][Windows.Forms.MessageBox]::Show('자동 실행을 종료합니다. 다시 시작을 선택할 때까지 재실행하지 않습니다.', '종료 요청') })
-$form.Controls.Add($stopEngine)
 $health = New-Object Windows.Forms.Button
-$health.Text = '실행 상태 · 실제 로그인 결과 · 오류 로그'
-$health.Location = New-Object Drawing.Point(30, 484); $health.Size = New-Object Drawing.Size(785, 42)
+$health.Text = '실행 상태 · 로그인 결과 · 오류 로그'
+$health.Location = New-Object Drawing.Point(430, 378); $health.Size = New-Object Drawing.Size(385, 42)
 $health.Add_Click({ Open-Feature 'status.ps1' })
 $form.Controls.Add($health)
 foreach ($card in @(@(30, '01', '근태 자동관리', "기존 예약 출퇴근 등록`n누락 퇴근 보완 · 늦은 출근 보정", '#4BAFC9'), @(430, '02', '시간외근무 신청', "선택한 월의 실제 연장일 조회`n날짜별 근무목적 입력 후 신청", '#55B6A6'))) {
@@ -98,8 +91,6 @@ foreach ($card in @(@(30, '01', '근태 자동관리', "기존 예약 출퇴근 
 Set-UiTheme $form
 $overtime.BackColor = $script:UiOrange
 $security.BackColor = $script:UiInk
-$stopEngine.BackColor = $script:UiOrange
-$startEngine.BackColor = $script:UiMint
 $health.BackColor = $script:UiInk
 $attendance.BringToFront(); $overtime.BringToFront()
 if ($SelfTest) { Write-UiPreview $form $PreviewPath; Write-Output 'LAUNCHER_UI_OK'; $form.Dispose(); exit 0 }
@@ -115,11 +106,12 @@ $script:StartupUpdatePhase = 'idle'
 $script:StartupUpdateManifest = $null
 $script:RestartAfterUpdate = $false
 $updateTimer = New-Object Windows.Forms.Timer
-$updateTimer.Interval = 200
+$updateTimer.Interval = 50
 $updateTimer.Add_Tick({
+    $featureError = @(Update-WorkdayFeatureHosts $script:FeatureHosts)
+    if ($featureError.Count) { $hint.Text = $featureError[-1] }
     if ($script:StartupUpdatePhase -eq 'waiting') {
-        $active = @($script:FeatureProcesses | Where-Object { -not $_.HasExited })
-        if ($active.Count) { return }
+        if ((Test-WorkdayFeatureBusy $script:FeatureHosts) -or @($script:FeatureHosts.Values | Where-Object {$_.phase -eq 'warming'}).Count) { return }
         foreach ($button in $form.Controls) { if ($button -is [Windows.Forms.Button]) { $button.Enabled = $false } }
         $hint.Text = '새 버전을 적용하고 있습니다. 완료되면 메뉴가 다시 열립니다.'
         $script:StartupUpdatePhase = 'applying'
@@ -154,17 +146,18 @@ $updateTimer.Add_Tick({
     }
 })
 $form.Add_Shown({
+    $script:FeatureHosts = New-WorkdayFeatureHosts $PSScriptRoot
     $script:StartupUpdatePhase = 'checking'
     $script:StartupUpdateJob = Start-WorkdayUpdateJob $PSScriptRoot
     $updateTimer.Start()
 })
 $form.Add_FormClosing({
-    if ($script:StartupUpdatePhase -eq 'applying') { $_.Cancel = $true }
+    if ($script:StartupUpdatePhase -eq 'applying' -or (Test-WorkdayFeatureBusy $script:FeatureHosts)) { $_.Cancel = $true }
 })
 try { [void]$form.ShowDialog() } finally {
     $updateTimer.Stop(); $updateTimer.Dispose()
     Exit-WorkdayUi
-    foreach ($child in $script:FeatureProcesses) { $child.Dispose() }
+    Close-WorkdayFeatureHosts $script:FeatureHosts
     if ($script:StartupUpdateJob) { $script:StartupUpdateJob.pipeline.Stop(); $script:StartupUpdateJob.pipeline.Dispose() }
 }
 if ($script:RestartAfterUpdate) { Open-Feature 'launcher.ps1' }
