@@ -24,8 +24,10 @@ function Open-Feature([string]$Name) {
     $arguments = @('-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', "`"$(Join-Path $PSScriptRoot $Name)`"")
     if ($Name -ne 'launcher.ps1') { $arguments += @('-OwnerHandle', $form.Handle.ToInt64()) }
     $child = Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -ArgumentList $arguments -WindowStyle Hidden -PassThru
-    Initialize-WorkdayWindows
-    [void][WorkdayWindowOwner]::AllowSetForegroundWindow($child.Id)
+    if ($Name -ne 'launcher.ps1') {
+        Initialize-WorkdayWindows
+        [void][WorkdayWindowOwner]::AllowSetForegroundWindow($child.Id)
+    }
 }
 $attendance = New-Object Windows.Forms.Button
 $attendance.Text = '근태 자동관리 설정'
@@ -107,9 +109,9 @@ if ($PSScriptRoot -eq (Join-Path $env:LOCALAPPDATA 'AutoAttendance')) {
 . (Join-Path $PSScriptRoot 'update.ps1')
 $hint.Text = Invoke-WorkdayUpdate $PSScriptRoot
 if ($hint.Text.StartsWith('업데이트 적용 완료')) {
-    Open-Feature 'launcher.ps1'
     $form.Dispose()
     Exit-WorkdayUi
+    Open-Feature 'launcher.ps1'
     exit 0
 }
 try { [void]$form.ShowDialog() } finally { Exit-WorkdayUi }

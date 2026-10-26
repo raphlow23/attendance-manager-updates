@@ -1,7 +1,7 @@
 {
     "runtime":  "3.12.10",
-    "sha256":  "195f21aad300f333b9e728263877dfe683115acd6934108dc3ce404411568ce6",
+    "sha256":  "9c03c542fcd1cb05d3a6553b996ae0061fc01ee5169ccb62c5698fb324ff3905",
     "version":  12,
-    "signature":  "W7eQ1+L49cJdEQxS73Gpymx/Ey/1BwIGhmA2w8RbpeDqoTWvv8JzbMNp/nEnU/6Gp6xfY02216blbxhq66a97Kb7wU9AaCIjIqWmgCNXjWplr1wo0Dmr86IjRmZJVv5aP23jRJn+yZE8kIcxthPC2XDpUZMeH96enJiprtVXDkXCeY5Cv3b2cYOW3/zWdJpOTnBwSEGDDg/U+yvqFSm3ELqIPHHBTjccbjNZIODXVQWmW5Q2kYmXKJeyOIZJt1eeYN/8irMRb/v7NwweWiYQ6St74X+Zn0D17VIdebXhJvBofgor9zLFJAdPbCyKSxWC6T6PGfO+Y+A1+54mn9ms9Mj4Fd+GBcmNy8pQSKlj+MjZuAk7C1aNj0jdxYApJpV/jXagES+XClgBTCGC0nuZrBxyI5tIeExte2SC79wvpfCcV++NXd01FSUjw1tDIib2J290HMrtCiCFnm7px5HTK9mPq/XntdA/1AluAbUYXP8enkDVzHq7iVbqd5HMFZ80",
+    "signature":  "ETm1rh7RcgiGR1iraMB6MxSJ3zAHH/3rp144H8wl5mayxL2W/LbAxNEHWie2ipHl9mq5NFY3Ankm2BTC+rFPuWssXnB5MTRFMFqN5WM0TyuD3V1At8cqwUFCcdUGClJpnULUsYv69cLlDlsV5C2GZ1Vbgt460tsUgACmnB5JhQFKUykMYxHQgFWwSHEKw0Ua0jmMpPXgGFnJfpvbKxQxSMdvbLwuHyjLbcPl41gGDn8m6fU7y/Kbi29l+RVAS0R/RIMzuat5thcepbteDgNomYwWIwiDSRU+yBpz0kNRASNT8RfEcZ0q3a9dmGiybZTCqwcJ99f6TRNiVIXir6gzkTYv1MZ+QA7pPSJrQxdESy9Sh9+RCY+YyYIbLlgneEU9dL1ptSeK22iMoBSTzZwpfZhy5HTr9HS4TWRITIwJW3BsiFIRItTeRsbqQhTFBCBBB/RP3mHuOdyq4HOmn1oy4TlIqsDecZ2XqynY3jpsIpUJ1AQhyPW1JvA38IiVH3yK",
     "archive_url":  "https://raw.githubusercontent.com/raphlow23/attendance-manager-updates/main/updates/v12/attendance-manager-v12.zip"
 }
