@@ -4,7 +4,7 @@ Windows용 근태 자동관리 및 월별 시간외근무 신청 프로그램의
 
 ## 설치
 
-[**설치 EXE 바로 다운로드 — AttendanceManager_Setup.exe**](https://github.com/raphlow23/attendance-manager-updates/releases/download/v10/AttendanceManager_Setup.exe)
+[**설치 EXE 바로 다운로드 — AttendanceManager_Setup.exe**](https://github.com/raphlow23/attendance-manager-updates/releases/download/v11/AttendanceManager_Setup.exe)
 
 다운로드한 **AttendanceManager_Setup.exe 파일 하나**를 실행하면 필요한 파일을 자동으로 풀고 현재 사용자 프로그램 폴더에 설치한 뒤 관리 화면을 바로 엽니다. 별도 Python 설치나 수동 ZIP 압축 해제는 필요하지 않습니다.
 
@@ -14,7 +14,7 @@ Windows 설정의 **설치된 앱** 또는 제어판의 프로그램 제거에�
 
 ## 자동 업데이트
 
-버전: **10 (2026-10-26)**
+버전: **11 (2026-10-26)**
 
 고정 주소:
 
@@ -34,3 +34,7 @@ https://raw.githubusercontent.com/raphlow23/attendance-manager-updates/main/upda
 실제 출퇴근 사이트 로그인·수정·신청 저장, Windows 재부팅과 실제 제어판 제거는 별도 실기 시험이 필요합니다. 자체 EXE의 공인 코드 서명이 없어 보안 정책에 따라 경고나 차단이 발생할 수 있습니다.
 
 계정정보·실행 기록·서명 개인키는 공개하지 않습니다.
+
+## v11 설치 수정
+
+Windows PowerShell에서 설치 종료 코드가 비어 정상 설치를 실패로 표시하던 문제를 수정했습니다. 설치 실패 시 원인과 종료 코드를 표시하고 `%TEMP%\AttendanceManager-install-logs`에 로그를 보존합니다. 단일 EXE 내부의 GUI 설치 경로를 별도 시험 폴더에서 검증했습니다.
