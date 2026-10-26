@@ -64,6 +64,8 @@ function Write-UiPreview($Window, [string]$Path) {
     } finally { $graphics.Dispose(); $bitmap.Dispose() }
 }
 function Set-UiTheme($Window) {
+    if (-not (Get-Command Initialize-WorkdayWindows -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'session.ps1') }
+    Initialize-WorkdayWindows
     $iconPath = Join-Path $PSScriptRoot 'attendance.ico'
     if (Test-Path -LiteralPath $iconPath) { $Window.Icon = New-Object Drawing.Icon($iconPath) }
     elseif (Test-Path -LiteralPath (Join-Path $PSScriptRoot '근태매니저.exe')) { $Window.Icon = [Drawing.Icon]::ExtractAssociatedIcon((Join-Path $PSScriptRoot '근태매니저.exe')) }

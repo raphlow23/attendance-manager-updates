@@ -25,7 +25,14 @@ function Write-WorkdayText([string]$Path, [string]$Text) {
 }
 function Initialize-WorkdayWindows {
     if ('WorkdayWindowOwner' -as [type]) { return }
-    Add-Type -ReferencedAssemblies System.Windows.Forms -TypeDefinition @'
+    # Load the precompiled helper from bytes so updates can replace the EXE.
+    $helper = Join-Path $PSScriptRoot '근태매니저.exe'
+    if (Test-Path -LiteralPath $helper) {
+        $assembly = [Reflection.Assembly]::Load([IO.File]::ReadAllBytes($helper))
+        if (-not $assembly.GetType('WorkdayWindowOwner')) { $assembly = $null }
+    }
+    if (-not ('WorkdayWindowOwner' -as [type])) {
+        Add-Type -ReferencedAssemblies System.Windows.Forms -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
@@ -34,8 +41,12 @@ public sealed class WorkdayWindowOwner : IWin32Window {
     public WorkdayWindowOwner(long handle) { Handle = new IntPtr(handle); }
     [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr handle);
     [DllImport("user32.dll")] public static extern bool AllowSetForegroundWindow(int processId);
+    [DllImport("shell32.dll", CharSet=CharSet.Unicode)] public static extern int SetCurrentProcessExplicitAppUserModelID(string appId);
 }
 '@
+    }
+    # Give the WinForms windows their own taskbar group instead of PowerShell's.
+    [void][WorkdayWindowOwner]::SetCurrentProcessExplicitAppUserModelID('Raphlow.AttendanceManager')
 }
 function Show-WorkdayDialog($Window, [long]$OwnerHandle = 0) {
     Initialize-WorkdayWindows

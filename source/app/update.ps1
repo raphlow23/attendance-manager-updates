@@ -8,7 +8,29 @@
         return $rsa.VerifyData([Text.Encoding]::UTF8.GetBytes($payload), [Security.Cryptography.CryptoConfig]::MapNameToOID('SHA256'), [Convert]::FromBase64String($Manifest.signature))
     } finally { $rsa.PersistKeyInCsp = $false; $rsa.Dispose() }
 }
-function Invoke-WorkdayUpdate([string]$Root) {
+function Get-WorkdayUpdateOffer([string]$Root) {
+    $config = Get-Content -LiteralPath (Join-Path $Root 'update-config.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    if (-not $config.enabled -or ([Uri]$config.manifest_url).Scheme -ne 'https') { throw '자동 업데이트 주소를 확인할 수 없습니다.' }
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $manifest = Invoke-RestMethod -Uri $config.manifest_url -TimeoutSec 8 -Headers @{ 'Cache-Control' = 'no-cache' }
+    $current = [int](Get-Content -LiteralPath (Join-Path $Root 'release-version.txt') -Raw)
+    if ([int]$manifest.version -le $current) { return [PSCustomObject]@{ available=$false; status="자동 업데이트: 최신 버전 ($current)"; manifest=$null } }
+    if (-not (Test-UpdateSignature $manifest (Join-Path $Root 'update-public.xml'))) { throw '업데이트 전자서명이 일치하지 않습니다.' }
+    return [PSCustomObject]@{ available=$true; status="새 버전 $($manifest.version): 설정 창을 닫으면 자동 적용합니다."; manifest=$manifest }
+}
+function Start-WorkdayUpdateJob([string]$Root, $Manifest = $null) {
+    $pipeline = [PowerShell]::Create()
+    [void]$pipeline.AddScript({
+        param($ScriptFile, $ApplicationRoot, $Offer)
+        $ErrorActionPreference = 'Stop'
+        . $ScriptFile
+        if ($null -eq $Offer) { Get-WorkdayUpdateOffer $ApplicationRoot }
+        else { Invoke-WorkdayUpdate $ApplicationRoot $Offer }
+    }).AddArgument((Join-Path $Root 'update.ps1')).AddArgument($Root).AddArgument($Manifest)
+    try { return [PSCustomObject]@{ pipeline=$pipeline; pending=$pipeline.BeginInvoke() } }
+    catch { $pipeline.Dispose(); throw }
+}
+function Invoke-WorkdayUpdate([string]$Root, $Manifest = $null) {
     $configFile = Join-Path $Root 'update-config.json'
     if (-not (Test-Path -LiteralPath $configFile)) { return '자동 업데이트: 배포 주소 연결 전' }
     $stage = $null
@@ -20,7 +42,7 @@ function Invoke-WorkdayUpdate([string]$Root) {
         if (-not $config.enabled -or -not $config.manifest_url) { return '자동 업데이트: 배포 주소 연결 전' }
         if (([Uri]$config.manifest_url).Scheme -ne 'https') { throw 'HTTPS 업데이트 주소가 필요합니다.' }
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        $manifest = Invoke-RestMethod -Uri $config.manifest_url -TimeoutSec 8 -Headers @{ 'Cache-Control' = 'no-cache' }
+        if ($null -eq $Manifest) { $Manifest = Invoke-RestMethod -Uri $config.manifest_url -TimeoutSec 8 -Headers @{ 'Cache-Control' = 'no-cache' } }
         $current = [int](Get-Content -LiteralPath (Join-Path $Root 'release-version.txt') -Raw)
         if ([int]$manifest.version -le $current) { return "자동 업데이트: 최신 버전 ($current)" }
         if (-not (Test-UpdateSignature $manifest (Join-Path $Root 'update-public.xml'))) { throw '업데이트 전자서명이 일치하지 않습니다.' }

@@ -20,11 +20,13 @@ $title.TextAlign = 'MiddleLeft'
 $title.BackColor = [Drawing.ColorTranslator]::FromHtml('#343C46')
 $title.ForeColor = [Drawing.Color]::White
 $form.Controls.Add($title)
+$script:FeatureProcesses = New-Object Collections.ArrayList
 function Open-Feature([string]$Name) {
     $arguments = @('-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', "`"$(Join-Path $PSScriptRoot $Name)`"")
     if ($Name -ne 'launcher.ps1') { $arguments += @('-OwnerHandle', $form.Handle.ToInt64()) }
     $child = Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -ArgumentList $arguments -WindowStyle Hidden -PassThru
     if ($Name -ne 'launcher.ps1') {
+        [void]$script:FeatureProcesses.Add($child)
         Initialize-WorkdayWindows
         [void][WorkdayWindowOwner]::AllowSetForegroundWindow($child.Id)
     }
@@ -107,11 +109,62 @@ if ($PSScriptRoot -eq (Join-Path $env:LOCALAPPDATA 'AutoAttendance')) {
     try { [void](Register-AttendanceInstall $PSScriptRoot) } catch { [void][Windows.Forms.MessageBox]::Show(('앱 제거 정보 등록을 확인해 주세요. ' + $_.Exception.Message), '등록 확인') }
 }
 . (Join-Path $PSScriptRoot 'update.ps1')
-$hint.Text = Invoke-WorkdayUpdate $PSScriptRoot
-if ($hint.Text.StartsWith('업데이트 적용 완료')) {
-    $form.Dispose()
+$hint.Text = '자동 업데이트를 백그라운드에서 확인합니다.'
+$script:StartupUpdateJob = $null
+$script:StartupUpdatePhase = 'idle'
+$script:StartupUpdateManifest = $null
+$script:RestartAfterUpdate = $false
+$updateTimer = New-Object Windows.Forms.Timer
+$updateTimer.Interval = 200
+$updateTimer.Add_Tick({
+    if ($script:StartupUpdatePhase -eq 'waiting') {
+        $active = @($script:FeatureProcesses | Where-Object { -not $_.HasExited })
+        if ($active.Count) { return }
+        foreach ($button in $form.Controls) { if ($button -is [Windows.Forms.Button]) { $button.Enabled = $false } }
+        $hint.Text = '새 버전을 적용하고 있습니다. 완료되면 메뉴가 다시 열립니다.'
+        $script:StartupUpdatePhase = 'applying'
+        $script:StartupUpdateJob = Start-WorkdayUpdateJob $PSScriptRoot $script:StartupUpdateManifest
+        return
+    }
+    $job = $script:StartupUpdateJob
+    if (-not $job -or -not $job.pending.IsCompleted) { return }
+    try {
+        $result = @($job.pipeline.EndInvoke($job.pending))
+        if ($job.pipeline.HadErrors) { throw $job.pipeline.Streams.Error[0].Exception }
+        if (-not $result.Count) { throw '업데이트 확인 결과가 없습니다.' }
+        $value = $result[-1]
+        if ($script:StartupUpdatePhase -eq 'checking') {
+            $hint.Text = $value.status
+            if ($value.available) { $script:StartupUpdateManifest = $value.manifest; $script:StartupUpdatePhase = 'waiting' }
+            else { $script:StartupUpdatePhase = 'done' }
+        } else {
+            $hint.Text = [string]$value
+            $script:StartupUpdatePhase = 'done'
+            if ($hint.Text.StartsWith('업데이트 적용 완료')) { $script:RestartAfterUpdate = $true; $form.Close() }
+        }
+    } catch {
+        $hint.Text = '업데이트 확인/적용 보류: ' + $_.Exception.Message
+        $script:StartupUpdatePhase = 'done'
+    } finally {
+        $job.pipeline.Dispose()
+        $script:StartupUpdateJob = $null
+        if ($script:StartupUpdatePhase -eq 'done') {
+            foreach ($button in $form.Controls) { if ($button -is [Windows.Forms.Button]) { $button.Enabled = $true } }
+        }
+    }
+})
+$form.Add_Shown({
+    $script:StartupUpdatePhase = 'checking'
+    $script:StartupUpdateJob = Start-WorkdayUpdateJob $PSScriptRoot
+    $updateTimer.Start()
+})
+$form.Add_FormClosing({
+    if ($script:StartupUpdatePhase -eq 'applying') { $_.Cancel = $true }
+})
+try { [void]$form.ShowDialog() } finally {
+    $updateTimer.Stop(); $updateTimer.Dispose()
     Exit-WorkdayUi
-    Open-Feature 'launcher.ps1'
-    exit 0
+    foreach ($child in $script:FeatureProcesses) { $child.Dispose() }
+    if ($script:StartupUpdateJob) { $script:StartupUpdateJob.pipeline.Stop(); $script:StartupUpdateJob.pipeline.Dispose() }
 }
-try { [void]$form.ShowDialog() } finally { Exit-WorkdayUi }
+if ($script:RestartAfterUpdate) { Open-Feature 'launcher.ps1' }

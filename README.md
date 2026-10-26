@@ -4,7 +4,7 @@ Windows용 근태 자동관리 및 월별 시간외근무 신청 프로그램의
 
 ## 설치
 
-[**설치 EXE 바로 다운로드 — AttendanceManager_Setup.exe**](https://github.com/raphlow23/attendance-manager-updates/releases/download/v12/AttendanceManager_Setup.exe)
+[**설치 EXE 바로 다운로드 — AttendanceManager_Setup.exe**](https://github.com/raphlow23/attendance-manager-updates/releases/download/v13/AttendanceManager_Setup.exe)
 
 다운로드한 **AttendanceManager_Setup.exe 파일 하나**를 실행하면 필요한 파일을 자동으로 풀고 현재 사용자 프로그램 폴더에 설치한 뒤 관리 화면을 바로 엽니다. 별도 Python 설치나 수동 ZIP 압축 해제는 필요하지 않습니다.
 
@@ -14,7 +14,7 @@ Windows 설정의 **설치된 앱** 또는 제어판의 프로그램 제거에�
 
 ## 자동 업데이트
 
-버전: **12 (2026-10-26)**
+버전: **13 (2026-10-26)**
 
 고정 주소:
 
@@ -51,3 +51,12 @@ Windows PowerShell에서 설치 종료 코드가 비어 정상 설치를 실패�
 이미 만든 당일 예약 시각은 보존하며 시간 범위 변경은 새 예약부터 적용합니다. PC 로그인 시 즉시 출근하는 기존 동작을 유지합니다. 연장일에는 1시간 기준 19:00–19:55, 2시간 기준 19:00–20:55에서 선택한 분 간격을 적용합니다. 월 선택 목록은 프로그램을 실행할 때와 켜 둔 상태에서 달이 바뀔 때 갱신됩니다.
 
 검증: Python 테스트 60개, Windows PowerShell 기존 파일 교체, 별도 프로세스 설정 창 소유 관계·메뉴 복귀, 월/연도 전환, v11→v12 서명 업데이트·사용자 데이터 보존, 단일 EXE 설치 시험 및 Defender 파일 검사 통과. 실제 사이트 등록·신청은 별도 실기 검증이 필요합니다.
+
+## v13 변경
+
+- 작업 표시줄이 PowerShell로 묶이지 않도록 근태매니저 전용 AppUserModelID를 지정했습니다.
+- 실행 시 메뉴를 먼저 표시하고 업데이트 확인을 백그라운드에서 수행합니다.
+- 새 버전이 있으면 설정 창을 닫은 뒤 자동 적용하고 메뉴를 다시 엽니다. 적용 중에는 조작과 종료를 잠시 막아 파일 교체를 보호합니다.
+- 창 관련 보조 코드를 EXE에 미리 컴파일해 매번 동적 컴파일하던 시간을 줄였습니다. EXE는 메모리에서 로드해 업데이트 파일 교체를 방해하지 않습니다.
+
+검증: 전용 작업 표시줄 앱 ID 조회, 별도 프로세스 창 소유 관계, 4초 업데이트 지연 중 UI 타이머 응답, 서명/무결성 검사, v11 업데이트 호환 및 사용자 데이터 보존 시험 통과. 실제 사용자 PC의 고정 아이콘/캐시 반영 여부는 별도 확인이 필요합니다.
