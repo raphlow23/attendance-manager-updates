@@ -4,7 +4,9 @@ Windows용 근태 자동관리 및 월별 시간외근무 신청 프로그램의
 
 ## 설치
 
-배포받은 **근태매니저_설치.exe 파일 하나**를 실행하면 필요한 파일을 자동으로 풀고 현재 사용자 프로그램 폴더에 설치한 뒤 관리 화면을 바로 엽니다. 별도 Python 설치나 수동 ZIP 압축 해제는 필요하지 않습니다.
+[**설치 EXE 바로 다운로드 — AttendanceManager_Setup.exe**](https://github.com/raphlow23/attendance-manager-updates/releases/download/v10/AttendanceManager_Setup.exe)
+
+다운로드한 **AttendanceManager_Setup.exe 파일 하나**를 실행하면 필요한 파일을 자동으로 풀고 현재 사용자 프로그램 폴더에 설치한 뒤 관리 화면을 바로 엽니다. 별도 Python 설치나 수동 ZIP 압축 해제는 필요하지 않습니다.
 
 Windows 설정의 **설치된 앱** 또는 제어판의 프로그램 제거에서 **근태매니저**를 제거할 수 있습니다. 제거 시 자동 실행/감시/자식 프로세스, 예약 작업 4개, 바로가기, 프로그램·계정·기록과 앱 등록 정보를 정리합니다.
 
