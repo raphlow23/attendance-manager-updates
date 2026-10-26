@@ -4,7 +4,7 @@ Windows용 근태 자동관리 및 월별 시간외근무 신청 프로그램의
 
 ## 설치
 
-[**설치 EXE 바로 다운로드 — AttendanceManager_Setup.exe**](https://github.com/raphlow23/attendance-manager-updates/releases/download/v11/AttendanceManager_Setup.exe)
+[**설치 EXE 바로 다운로드 — AttendanceManager_Setup.exe**](https://github.com/raphlow23/attendance-manager-updates/releases/download/v12/AttendanceManager_Setup.exe)
 
 다운로드한 **AttendanceManager_Setup.exe 파일 하나**를 실행하면 필요한 파일을 자동으로 풀고 현재 사용자 프로그램 폴더에 설치한 뒤 관리 화면을 바로 엽니다. 별도 Python 설치나 수동 ZIP 압축 해제는 필요하지 않습니다.
 
@@ -14,7 +14,7 @@ Windows 설정의 **설치된 앱** 또는 제어판의 프로그램 제거에�
 
 ## 자동 업데이트
 
-버전: **11 (2026-10-26)**
+버전: **12 (2026-10-26)**
 
 고정 주소:
 
@@ -38,3 +38,16 @@ https://raw.githubusercontent.com/raphlow23/attendance-manager-updates/main/upda
 ## v11 설치 수정
 
 Windows PowerShell에서 설치 종료 코드가 비어 정상 설치를 실패로 표시하던 문제를 수정했습니다. 설치 실패 시 원인과 종료 코드를 표시하고 `%TEMP%\AttendanceManager-install-logs`에 로그를 보존합니다. 단일 EXE 내부의 GUI 설치 경로를 별도 시험 폴더에서 검증했습니다.
+
+## v12 변경
+
+- 설정 저장 및 시간외근무 조회 시 `Replace` 경로 오류 수정
+- 메뉴에서 연 설정 창이 메뉴 앞에 표시되도록 소유 창 지정
+- 출근·일반 퇴근 시작/종료 시간 및 1분/5분 간격 설정 추가
+- 조회 월 드롭다운(최근 60개월), 새 월 자동 추가 및 선택한 월 유지
+- 자동 업데이트 설정 버튼 제거: 실행 시 고정 배포 주소에서 서명을 검사하고 자동 적용
+- 실행 파일·프로그램 창·설치 파일에 시계와 체크 표시 아이콘 적용
+
+이미 만든 당일 예약 시각은 보존하며 시간 범위 변경은 새 예약부터 적용합니다. PC 로그인 시 즉시 출근하는 기존 동작을 유지합니다. 연장일에는 1시간 기준 19:00–19:55, 2시간 기준 19:00–20:55에서 선택한 분 간격을 적용합니다. 월 선택 목록은 프로그램을 실행할 때와 켜 둔 상태에서 달이 바뀔 때 갱신됩니다.
+
+검증: Python 테스트 60개, Windows PowerShell 기존 파일 교체, 별도 프로세스 설정 창 소유 관계·메뉴 복귀, 월/연도 전환, v11→v12 서명 업데이트·사용자 데이터 보존, 단일 EXE 설치 시험 및 Defender 파일 검사 통과. 실제 사이트 등록·신청은 별도 실기 검증이 필요합니다.
