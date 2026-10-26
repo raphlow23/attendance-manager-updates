@@ -11,6 +11,7 @@ Copy-Item (Join-Path $taskRoot 'app\session.ps1') $fixture
 $source=@'
 param([long]$OwnerHandle,[switch]$SelfTest)
 if($SelfTest){return}
+Get-Item -LiteralPath (Join-Path $PSScriptRoot '__fixture_missing__') -ErrorAction SilentlyContinue
 $f=New-Object Windows.Forms.Form
 $f.Opacity=0;$f.ShowInTaskbar=$false
 $t=New-Object Windows.Forms.Timer

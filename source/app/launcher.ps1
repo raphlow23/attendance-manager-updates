@@ -122,7 +122,7 @@ $updateTimer.Add_Tick({
     if (-not $job -or -not $job.pending.IsCompleted) { return }
     try {
         $result = @($job.pipeline.EndInvoke($job.pending))
-        if ($job.pipeline.HadErrors) { throw $job.pipeline.Streams.Error[0].Exception }
+        if ($job.pipeline.Streams.Error.Count) { throw $job.pipeline.Streams.Error[0].Exception }
         if (-not $result.Count) { throw '업데이트 확인 결과가 없습니다.' }
         $value = $result[-1]
         if ($script:StartupUpdatePhase -eq 'checking') {

@@ -280,7 +280,7 @@ $taskTimer.Add_Tick({
     if(-not $job -or -not $job.pending.IsCompleted){return}
     try {
         $results=@($job.pipeline.EndInvoke($job.pending))
-        if($job.pipeline.HadErrors){throw $job.pipeline.Streams.Error[0].Exception}
+        if($job.pipeline.Streams.Error.Count){throw $job.pipeline.Streams.Error[0].Exception}
         $result=$results[-1]
         $status.Text=if($result.message){$result.message}else{$result.lines -join "`n"}
         if($job.action -eq 'register'){$pwBox.Clear()}

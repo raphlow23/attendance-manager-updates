@@ -29,7 +29,7 @@ function Update-WorkdayFeatureHosts($Hosts) {
         if ($hostState.pending -and $hostState.pending.IsCompleted) {
             try {
                 [void]$hostState.pipeline.EndInvoke($hostState.pending)
-                if ($hostState.pipeline.HadErrors) { throw $hostState.pipeline.Streams.Error[0].Exception }
+                if ($hostState.pipeline.Streams.Error.Count) { throw $hostState.pipeline.Streams.Error[0].Exception }
             } catch { Write-Output ('화면 실행 확인: ' + $_.Exception.Message) }
             $hostState.pipeline.Commands.Clear(); $hostState.pipeline.Streams.Error.Clear()
             $hostState.pending=$null; $hostState.phase='ready'
