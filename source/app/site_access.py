@@ -92,6 +92,14 @@ def check_page(app, driver):
         for entry in entries:
             message=json.loads(entry['message'])['message']
             params=message.get('params',{})
+            expected=getattr(driver,'_workday_expected_save_url',None)
+            if isinstance(expected,str) and expected:
+                request=params.get('request',{})
+                if message.get('method')=='Network.requestWillBeSent' and request.get('method')=='POST' and request.get('url')==expected:
+                    driver._workday_post_seen=True
+                response=params.get('response',{}) if message.get('method')=='Network.responseReceived' else params.get('redirectResponse',{})
+                if response.get('url')==expected:
+                    driver._workday_save_response_status=int(response.get('status',0))
             if message.get('method')=='Network.requestWillBeSent' and params.get('type') in ('Document','XHR','Fetch'):
                 if urlsplit(params.get('request',{}).get('url','')).hostname==urlsplit(app.SITE_URL).hostname:
                     requests.append(float(params.get('wallTime',time.time())))

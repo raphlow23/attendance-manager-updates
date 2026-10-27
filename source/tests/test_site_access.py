@@ -46,6 +46,16 @@ class AccessTests(unittest.TestCase):
         self.assertNotIn('do-not-store',text)
         self.assertGreaterEqual(json.loads(text)['cooldown_until'],2800)
 
+    def test_save_post_and_redirect_status_are_recorded_without_body(self):
+        driver=Mock();expected=app.SITE_URL+'/sappd_g4_edit_pro.php?no=10001&m=10'
+        driver._workday_expected_save_url=expected
+        events=[{'method':'Network.requestWillBeSent','params':{'type':'Document','request':{'url':expected,'method':'POST','postData':'private-test-value'}}},
+                {'method':'Network.requestWillBeSent','params':{'redirectResponse':{'url':expected,'status':302}}}]
+        driver.get_log.return_value=[{'message':json.dumps({'message':event})} for event in events]
+        access.check_page(app,driver)
+        self.assertIs(driver._workday_post_seen,True);self.assertEqual(driver._workday_save_response_status,302)
+        self.assertNotIn('private-test-value',Path(app.DATA_DIR,'site-access.json').read_text(encoding='utf-8'))
+
     def test_normal_connectivity_probe_uses_head_and_long_interval(self):
         response=MagicMock()
         with patch('resident.urlopen',return_value=response) as request:

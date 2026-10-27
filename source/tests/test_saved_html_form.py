@@ -55,6 +55,8 @@ class ParsedSite:
         self.navigations.append(url);self.current_url=url
         if self.edit_source:self.doc=html.fromstring(self.edit_source);self.cache={}
     def execute_script(self,script,inputs,values):
+        if 'button.click()' in script:
+            inputs.click();return True
         for element,value in zip(inputs,values):element.live_value=value
         return [element.live_value for element in inputs]
     def wrap(self,node):

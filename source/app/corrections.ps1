@@ -244,7 +244,7 @@ function Start-Job($job) {
  $script:operation=$job.operation
  $script:worker=Start-WorkdayHiddenProcess $python "`"$(Join-Path $PSScriptRoot 'main.py')`" --attendance-job `"$script:jobPath`"" $PSScriptRoot
  foreach($c in $form.Controls) { if($c -ne $status) { $c.Enabled=$false } }
- $status.Text=if($Job.operation -in @('rules','rules_delete')){'저장 날짜 설정을 변경 중입니다. 사이트에는 접속하지 않습니다.'}else{'사이트 처리 중입니다. 완료될 때까지 기다려 주세요.'}; $timer.Start()
+ $status.Text=if($Job.operation -in @('rules','rules_delete')){'저장 날짜 설정을 변경 중입니다. 사이트에는 접속하지 않습니다.'}elseif($Job.operation -eq 'reconcile_apply'){'선택 날짜를 하루씩 수정 중입니다. 한 날짜의 저장을 확인한 뒤 다음 날짜로 진행합니다.'}else{'사이트 처리 중입니다. 완료될 때까지 기다려 주세요.'}; $timer.Start()
 }
 $dayPicker.Add_ValueChanged({ Read-Rule })
 $vacation.Add_CheckedChanged({if($vacation.Checked){$exclude.Checked=$false}})

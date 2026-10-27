@@ -76,7 +76,7 @@ with tempfile.TemporaryDirectory(prefix='workday-local-dom-') as folder:
             original_attribute=WebElement.get_attribute
             def initial_attribute(element,name):
                 return element.get_dom_attribute(name) if name=='value' else original_attribute(element,name)
-            with patch.object(WebElement,'send_keys',lambda self,*values:None),patch.object(WebElement,'get_attribute',initial_attribute):
+            with patch.object(WebElement,'send_keys',lambda self,*values:None),patch.object(WebElement,'click',lambda self:None),patch.object(WebElement,'get_attribute',initial_attribute):
                 assert page.correct(day,{'checkin':datetime(2026,10,7,9),'checkout':datetime(2026,10,7,18)},page.record(day))
             after=page.record(day)
             assert parse_time(after['checkin'])==(9,0) and parse_time(after['checkout'])==(18,0)

@@ -234,6 +234,7 @@ def apply_plan(app, page, plan, month, background=False):
         # An uncertain save leaves its journal and hold set. Never reroll a new
         # checkout or proceed with the rest of the month after an ambiguous save.
         try:
+            app.log_event(f'{key} 날짜별 수정 시작 · 이 날짜 저장 확인 후 다음 날짜 처리')
             if page.correct(day, targets, change['before']) is not True:
                 raise RuntimeError('사이트 저장 확인 결과가 없습니다.')
         except Exception as error:

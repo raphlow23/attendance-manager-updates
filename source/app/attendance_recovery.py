@@ -7,7 +7,7 @@ import re
 from urllib.parse import urlsplit, parse_qs
 from datetime import date, datetime, timedelta
 
-from selenium.common.exceptions import NoAlertPresentException, StaleElementReferenceException, TimeoutException
+from selenium.common.exceptions import NoAlertPresentException, NoSuchElementException, StaleElementReferenceException, TimeoutException, UnexpectedAlertPresentException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import Select, WebDriverWait
@@ -72,16 +72,28 @@ for(const input of inputs){
 return inputs.map(input=>input.value);
 '''
 
+ACTIVATE_SAVE = '''
+const button=arguments[0], form=arguments[1];
+if(!button.isConnected || button.disabled) return false;
+if(form && (button.form!==form || !form.checkValidity())) return false;
+button.click();
+return true;
+'''
+
 
 class AttendancePage:
     def __init__(self, driver, today):
         self.driver = driver
         self.today = today
         self.wait = WebDriverWait(driver, 20)
+        current=getattr(driver,'current_url','')
+        self.list_url=current if isinstance(current,str) and urlsplit(current).path.rsplit('/',1)[-1]=='sappd_g4.php' else None
 
     def open(self):
         one(self.driver.find_elements(By.LINK_TEXT, "근태관리"), "근태관리 메뉴").click()
         self.wait.until(lambda _: self.month_heading() is not None)
+        current=getattr(self.driver,'current_url','')
+        if isinstance(current,str) and current:self.list_url=current
 
     def month_heading(self):
         text = self.driver.find_element(By.TAG_NAME, "body").text
@@ -122,6 +134,8 @@ class AttendancePage:
         controls = self.driver.find_elements(By.CSS_SELECTOR, "button, a, input[type='submit'], input[type='button']")
         one([c for c in controls if label(c) == "조회"], "월 조회 버튼").click()
         self.wait.until(lambda _: self.month_heading() in {(None, day.month), (day.year, day.month)})
+        current=getattr(self.driver,'current_url','')
+        if isinstance(current,str) and current:self.list_url=current
 
     def record(self, day):
         self.choose_month(day)
@@ -165,6 +179,14 @@ class AttendancePage:
             detail = '제한 시간 안에 화면 또는 저장 결과를 확인하지 못했습니다.' if isinstance(error, TimeoutException) else str(error).strip() or type(error).__name__
             if isinstance(error, TimeoutException) and phase == '출퇴근 수정 입력 화면 찾기':
                 detail += ' ' + str(getattr(self.driver, '_workday_editor_diagnostic', ''))
+            if isinstance(error, TimeoutException) and phase == '사이트에 저장된 출퇴근 시간 재확인':
+                if getattr(self.driver,'_workday_post_seen',False):
+                    detail += f' 저장 POST 요청 확인 / 응답 {getattr(self.driver,"_workday_save_response_status",None) or "확인 중"}.'
+                else:
+                    detail += ' 브라우저 기록에서 저장 POST 요청을 확인하지 못했습니다.'
+                detail += ' '+str(getattr(self.driver,'_workday_verify_values',''))
+                alert=getattr(self.driver,'_workday_site_alert','')
+                if isinstance(alert,str) and alert:detail += ' 사이트 알림: '+alert[:200]
             submitted = bool(getattr(self.driver, '_workday_write_submitted', False))
             outcome = '저장 요청 이후이므로 사이트에서 결과를 다시 확인하세요.' if submitted else '저장 버튼을 누르기 전에 중단했습니다.'
             raise RuntimeError(f'{day}: {phase} 실패 · {detail} {outcome}') from error
@@ -172,6 +194,10 @@ class AttendancePage:
     def _correct(self, day, targets, expected):
         """User-reviewed correction; preserve notes and reject stale snapshots."""
         self.driver._workday_write_submitted = False
+        self.driver._workday_post_seen = False
+        self.driver._workday_save_response_status = None
+        self.driver._workday_site_alert = ''
+        self.driver._workday_verify_values = ''
         if not targets or set(targets) - {'checkin', 'checkout'}:
             raise ValueError('정정할 출퇴근 시간을 확인하세요.')
         before = self.record(day)
@@ -308,24 +334,53 @@ class AttendancePage:
         if kind=='named' and form.get_attribute('action')!=expected_action:
             raise RuntimeError('입력 중 저장 대상이 변경되어 저장을 중단합니다.')
         self.driver._workday_phase = '수정완료 버튼 저장'
+        self.driver._workday_expected_save_url = expected_action if kind=='named' else ''
         self.driver._workday_write_submitted = True
-        save.click()
-        if response_check:
-            response_check()
+        try:
+            execute=getattr(self.driver,'execute_script',None)
+            if callable(execute):
+                accepted=execute(ACTIVATE_SAVE,save,form if kind=='named' else None)
+                if accepted is False:
+                    self.driver._workday_write_submitted=False
+                    raise RuntimeError('수정완료 버튼 또는 폼 검증에서 제출이 거절되었습니다. 저장하지 않았습니다.')
+            else:
+                save.click()
+        except UnexpectedAlertPresentException as error:
+            # A submission may open a site alert. Never click/submit again.
+            self.driver._workday_site_alert=str(error.alert_text or '')[:300]
+            pass
 
         self.driver._workday_phase = '사이트에 저장된 출퇴근 시간 재확인'
+        refreshed=False
         def verified(_):
+            nonlocal refreshed
             try:
-                self.driver.switch_to.alert.accept()
+                alert=self.driver.switch_to.alert
+                self.driver._workday_site_alert=str(alert.text)[:300]
+                alert.accept()
             except NoAlertPresentException:
                 pass
+            if response_check:
+                response_check()
+            status=getattr(self.driver,'_workday_save_response_status',None)
+            if isinstance(status,int) and status>=400:
+                raise RuntimeError(f'사이트 저장 응답이 HTTP {status}입니다. 다시 제출하지 않고 중단합니다.')
+            if self.list_url and isinstance(status,int) and 200<=status<400 and not refreshed:
+                refreshed=True
+                if self.driver.current_url!=self.list_url:
+                    self.driver.get(self.list_url)
+                    if response_check:response_check()
             try:
                 after = self.record(day)
+                self.driver._workday_verify_values=f'조회 출근 {after["checkin"]} / 퇴근 {after["checkout"]}.'
                 return (all(parse_time(after[field]) == (target.hour, target.minute) for field, target in targets.items())
                         and all(after[field] == before[field] for field in ('checkin', 'checkout') if field not in targets)
                         and after['note'] == before['note'])
-            except StaleElementReferenceException:
+            except (StaleElementReferenceException, NoSuchElementException):
                 return False
+            except RuntimeError as error:
+                if '조회 월을 확인할 수' in str(error) or '근태 행을 하나로' in str(error):return False
+                raise
 
         self.wait.until(verified)
         return True
