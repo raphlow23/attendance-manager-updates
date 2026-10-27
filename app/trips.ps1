@@ -3,6 +3,50 @@ param([switch]$SelfTest,[string]$PreviewPath,[long]$OwnerHandle=0)
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+if(-not ('WorkdayTripEntryGrid' -as [type])){
+ Add-Type -ReferencedAssemblies System.Windows.Forms,System.Drawing -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Windows.Forms;
+public class WorkdayTripEntryGrid : DataGridView {
+    public bool PurposeEntryMode { get; set; }
+    protected override bool ProcessDialogKey(Keys keyData) {
+        return MoveEntryKey(keyData) || base.ProcessDialogKey(keyData);
+    }
+    protected override bool ProcessDataGridViewKey(KeyEventArgs e) {
+        return MoveEntryKey(e.KeyData) || base.ProcessDataGridViewKey(e);
+    }
+    public bool MoveEntryKey(Keys keyData) {
+        Keys code=keyData & Keys.KeyCode;
+        if(!PurposeEntryMode || (code!=Keys.Tab && code!=Keys.Enter) ||
+           (keyData & (Keys.Control|Keys.Alt))!=0 || CurrentCell==null) return false;
+        string name=CurrentCell.OwningColumn.Name;
+        if(name!="location" && name!="purpose") return false;
+        bool back=(keyData & Keys.Shift)!=0;
+        DataGridViewCell current=CurrentCell;
+        if(!EndEdit()) return true;
+        List<DataGridViewCell> cells=new List<DataGridViewCell>();
+        foreach(DataGridViewRow row in Rows) {
+            if(row.IsNewRow || !row.Visible) continue;
+            foreach(string column in new string[]{"location","purpose"}) {
+                DataGridViewCell cell=row.Cells[column];
+                if(cell.Visible && !cell.ReadOnly && !row.ReadOnly) cells.Add(cell);
+            }
+        }
+        int at=cells.IndexOf(current);
+        int next=at+(back ? -1 : 1);
+        if(at<0) return false;
+        if(next<0 || next>=cells.Count) {
+            if(Parent!=null) Parent.SelectNextControl(this,!back,true,true,true);
+            return true;
+        }
+        CurrentCell=cells[next];
+        BeginEdit(true);
+        return true;
+    }
+}
+'@
+}
 . (Join-Path $PSScriptRoot 'session.ps1')
 $script:worker=$null;$script:reviewId=$null;$script:allRows=@();$script:stage=1;$script:loading=$false;$script:existing=0
 $form=New-Object Windows.Forms.Form
@@ -20,7 +64,7 @@ $total=New-Object Windows.Forms.NumericUpDown;$total.Location=New-Object Drawing
 [void](Text-Label '만원 · 예: 20 = 20만원' 515 65 295)
 $scan=Make-Button '출퇴근 일정 조회' 855 55 355
 $note=Text-Label '구분: 센터 / 이동: 대중교통 · 행사 기본 09~18시 / 일반 기본 13~17시 · 휴가 숨김 · 기등록 날짜·금액을 최초 조회부터 표시 · 저장 전 재확인' 20 110 1190
-$grid=New-Object Windows.Forms.DataGridView;$grid.Location=New-Object Drawing.Point(20,155);$grid.Size=New-Object Drawing.Size(1190,370);$grid.Anchor='Top,Bottom,Left,Right'
+$grid=New-Object WorkdayTripEntryGrid;$grid.Location=New-Object Drawing.Point(20,155);$grid.Size=New-Object Drawing.Size(1190,370);$grid.Anchor='Top,Bottom,Left,Right'
 $grid.AllowUserToAddRows=$false;$grid.AllowUserToDeleteRows=$false;$grid.RowHeadersVisible=$false;$grid.AutoSizeColumnsMode='Fill';$grid.RowTemplate.Height=32
 $check=New-Object Windows.Forms.DataGridViewCheckBoxColumn;$check.Name='selected';$check.HeaderText='선택';$check.FillWeight=40;[void]$grid.Columns.Add($check)
 foreach($spec in @(@('date','날짜',100),@('weekday','요일',45),@('attendance','출퇴근',115),@('required','구분',145),@('registered','출장 등록',95))){$c=New-Object Windows.Forms.DataGridViewTextBoxColumn;$c.Name=$spec[0];$c.HeaderText=$spec[1];$c.FillWeight=$spec[2];$c.ReadOnly=$true;[void]$grid.Columns.Add($c)}
@@ -66,7 +110,7 @@ function Update-Totals {
   if(-not $valid){$result+=' · 출발·복귀를 출퇴근 구간 안으로 조정하세요.'}
   $summary.Text="목표 $($total.Value.ToString('N0'))만원 / $((Target-Amount)/5000)시간 · 기존 $($script:existing.ToString('N0'))원 · 선택 $count 일 / $($sum.ToString('N0'))원`r`n$result"
   $summary.ForeColor=if($left -eq 0 -and $valid -and -not $missing){[Drawing.Color]::DarkGreen}else{[Drawing.Color]::Firebrick}
-  $ready=([bool]$script:reviewId -and ($left -eq 0 -or -not $hasNew) -and $count -gt 0 -and $valid -and -not $missing -and -not $script:worker)
+  $ready=([bool]$script:reviewId -and ($left -ge 0 -or -not $hasNew) -and $count -gt 0 -and $valid -and -not $missing -and -not $script:worker)
   $complete.Enabled=($ready -and $script:stage -eq 1);$submit.Enabled=([bool]$script:reviewId -and ($left -ge 0 -or -not $hasNew) -and $count -gt 0 -and $valid -and $details -and -not $missing -and -not $script:worker -and $script:stage -eq 2)
   $loadExisting.Enabled=([bool]$script:reviewId -and -not $script:worker)
   $allocate.Enabled=([bool]$script:reviewId -and $count -gt 0 -and -not $script:worker)
@@ -86,12 +130,21 @@ function Render-Rows($rows){
  }finally{$script:loading=$false;Update-Totals}
 }
 function Change-Stage($stage){
- $script:stage=$stage;$details=($stage -eq 2)
+ $script:stage=$stage;$details=($stage -eq 2);$grid.PurposeEntryMode=$details
  $grid.Columns['location'].Visible=$details;$grid.Columns['purpose'].Visible=$details;$grid.Columns['attendance'].Visible=-not $details
  $complete.Visible=-not $details;$allocate.Visible=-not $details;$back.Visible=$details;$submit.Visible=$details;$loadExisting.Visible=-not $details;$total.Enabled=-not $details;$month.Enabled=-not $details
  $heading.Text=if($details){'2. 장소·목적 입력 — 기존 출장은 수정하고, 신규 날짜는 추가 등록합니다.'}else{'1. 날짜·시간 선택 → 2. 선택한 날짜의 출장 장소·목적 입력 → 날짜별 등록'}
- $status.Text=if($details){'체크 해제 또는 목적 미입력 날짜는 등록에서 제외합니다. 장소와 목적을 입력한 날짜만 확인 후 등록합니다.'}else{'금액이 차면 추가 체크를 막습니다. 선택을 해제하거나 시간을 줄이면 다시 선택할 수 있습니다.'}
+ $status.Text=if($details){'Tab·Enter: 장소 → 목적 → 다음 행 장소 / Shift: 역방향 · 체크 해제·목적 미입력은 등록 제외'}else{'금액이 차면 추가 체크를 막습니다. 선택을 해제하거나 시간을 줄이면 다시 선택할 수 있습니다.'}
  if($details){Render-Rows @($script:allRows|Where-Object{$_.selected})}else{Render-Rows $script:allRows}
+}
+function Open-TripDetails($Result,[scriptblock]$Confirm=$null){
+ $proceed=$true
+ if([int]$Result.summary.remaining_amount -gt 0){
+  $notice="목표금액에 필요한 출장 일수·시간을 아직 채우지 못했습니다.`r`n선택 $(@($Result.rows|Where-Object{$_.selected}).Count)일 · $($Result.summary.message)`r`n`r`n현재 선택한 날짜만으로 장소·목적 입력 화면으로 넘어갈까요?"
+  if($Confirm){$proceed=[bool](& $Confirm $notice)}else{$proceed=([Windows.Forms.MessageBox]::Show($form,$notice,'출장 일수·시간 미달 안내','OKCancel','Warning') -eq 'OK')}
+ }
+ if($proceed){Change-Stage 2}else{Change-Stage 1}
+ return $proceed
 }
 function Entries{@($grid.Rows|ForEach-Object{@{date=[string]$_.Cells['date'].Value;selected=[bool]$_.Cells['selected'].Value;hours=[int]$_.Cells['hours'].Value;start_hour=[int]$_.Cells['start_hour'].Value;end=[string]$_.Cells['end'].Value;location=[string]$_.Cells['location'].Value;purpose=[string]$_.Cells['purpose'].Value}})}
 function Start-TripJob($job){
@@ -151,7 +204,12 @@ $timer.Add_Tick({
    $script:reviewId=$null
    if($result.all_rows){$script:allRows=@($result.all_rows);Change-Stage 1}
    elseif($result.rows){foreach($entry in $result.rows){$entry.selected=$false;$entry.blocked=$true};$script:allRows=@($result.rows);Render-Rows $result.rows}
-  }elseif($result.ok){$script:reviewId=$result.review_id;$script:allRows=@($result.rows);if($script:operation -eq 'inspect' -and $result.ready){Change-Stage 2}else{Change-Stage 1}}
+  }elseif($result.ok){
+   $script:reviewId=$result.review_id;$script:allRows=@($result.rows)
+   if($script:operation -eq 'inspect' -and $result.ready){
+    if(-not (Open-TripDetails $result)){$result.message='다음 단계 이동을 취소했습니다. 날짜·시간 선택을 조정하세요.'}
+   }else{Change-Stage 1}
+  }
   if(-not $result.ok){throw $result.error}
   $status.Text=$result.message
   if($script:operation -eq 'submit'){[void][Windows.Forms.MessageBox]::Show($form,$result.message,'출장 등록 결과','OK','Information')}
@@ -167,6 +225,14 @@ Update-Totals
 if($SelfTest){
  $fixture='[{"date":"2026-10-07","weekday":"수","checkin":"09:00","checkout":"18:00","mandatory":false,"event_day":true,"selected":true,"blocked":false,"hours":4,"start_hour":9,"start":"09:00","end":"18:00","amount":20000,"existing_amount":0,"location":"","purpose":"","status":"선택 가능"},{"date":"2026-10-13","weekday":"화","checkin":"08:35","checkout":"18:00","mandatory":false,"selected":false,"blocked":false,"hours":4,"start_hour":13,"start":"13:00","end":"17:00","amount":20000,"existing_amount":0,"location":"","purpose":"","status":"선택 가능"},{"date":"2026-10-14","weekday":"수","checkin":"08:30","checkout":"18:00","mandatory":false,"selected":false,"blocked":false,"hours":4,"start_hour":13,"start":"13:00","end":"17:00","amount":20000,"existing_amount":0,"location":"","purpose":"","status":"선택 가능"}]'|ConvertFrom-Json
  $script:reviewId='fixture';$script:allRows=@($fixture);$total.Value=20;if((Target-Amount) -ne 200000){throw '만원 입력 변환 실패'};$total.Value=3;Render-Rows $script:allRows
+ if(-not $complete.Enabled){throw '목표 미달 일정의 다음 단계 진행 불가'}
+ $under=[PSCustomObject]@{rows=$script:allRows;summary=[PSCustomObject]@{remaining_amount=10000;message='출장 추가 필요: 2시간 / 10,000원 부족'}}
+ $script:lastUnderNotice=''
+ if(Open-TripDetails $under {param($text)$script:lastUnderNotice=$text;return $false}){throw '미달 안내 취소 무시'}
+ if($script:stage -ne 1 -or $script:lastUnderNotice -notlike '*출장 일수·시간*' -or $script:worker){throw '미달 안내/취소 시 선택 화면 유지 실패'}
+ if(-not (Open-TripDetails $under {param($text)return $true}) -or $script:stage -ne 2 -or $grid.Rows.Count -ne 1){throw '미달 안내 확인 후 선택 날짜 이동 실패'}
+ Change-Stage 1
+
  if($grid.Rows[0].Cells['selected'].ReadOnly -or $grid.Rows[0].Cells['start_hour'].ReadOnly -or $grid.Rows[0].Cells['required'].Value -ne '연장근무 제외(행사)'){throw '행사 선택/시간 수정 검사 실패'}
  $grid.Rows[1].Cells['selected'].Value=$true
  if($grid.Rows[1].Cells['hours'].Value -ne '2' -or -not $complete.Enabled){throw '남은 1만원의 2시간 자동 배분 실패'}
@@ -179,6 +245,18 @@ if($SelfTest){
  $grid.Rows[2].Cells['selected'].Value=$false;$grid.Rows[1].Cells['selected'].Value=$true
  Change-Stage 2
  if($grid.Rows.Count -ne 2 -or -not $grid.Columns['location'].Visible -or $submit.Enabled){throw '선택 일정만 표시/직접 입력 검사 실패'}
+ $grid.CreateControl();$grid.CurrentCell=$grid.Rows[0].Cells['location'];[void]$grid.BeginEdit($true)
+ if(-not $grid.EditingControl){throw '장소 편집 컨트롤 없음'}
+ $grid.EditingControl.Text='키보드 입력 장소'
+ [void]$grid.MoveEntryKey([Windows.Forms.Keys]::Tab)
+ if($grid.CurrentCell.ColumnIndex -ne $grid.Columns['purpose'].Index -or $grid.Rows[0].Cells['location'].Value -ne '키보드 입력 장소'){throw 'Tab 장소→목적/입력 보존 실패'}
+ $grid.EditingControl.Text='키보드 입력 목적';[void]$grid.MoveEntryKey([Windows.Forms.Keys]::Enter)
+ if($grid.CurrentCell.RowIndex -ne 1 -or $grid.CurrentCell.OwningColumn.Name -ne 'location' -or $grid.Rows[0].Cells['purpose'].Value -ne '키보드 입력 목적'){throw 'Enter 다음 행 장소/입력 보존 실패'}
+ [void]$grid.MoveEntryKey([Windows.Forms.Keys]([int][Windows.Forms.Keys]::Shift -bor [int][Windows.Forms.Keys]::Enter))
+ if($grid.CurrentCell.RowIndex -ne 0 -or $grid.CurrentCell.OwningColumn.Name -ne 'purpose'){throw 'Shift+Enter 역방향 실패'}
+ [void]$grid.MoveEntryKey([Windows.Forms.Keys]([int][Windows.Forms.Keys]::Shift -bor [int][Windows.Forms.Keys]::Tab))
+ if($grid.CurrentCell.OwningColumn.Name -ne 'location'){throw 'Shift+Tab 역방향 실패'}
+ [void]$grid.EndEdit()
  foreach($row in $grid.Rows){$row.Cells['location'].Value='예시 출장장소';$row.Cells['purpose'].Value='예시 출장목적'}
  Update-Totals;if(-not $submit.Enabled){throw '출장 장소·목적 입력 완료 검사 실패'}
  if($grid.Rows[0].Cells['selected'].ReadOnly){throw '목적 화면 체크 해제 불가'}
@@ -193,7 +271,7 @@ if($SelfTest){
  if($grid.Rows[0].Cells['location'].Value -ne '저장된 장소' -or $grid.Rows[0].Cells['purpose'].Value -ne '저장된 목적'){throw '기존 장소·목적 불러오기 실패'}
 
  if($PreviewPath){Change-Stage 2;$script:loading=$true;$form.Controls.Remove($allocate);$form.Controls.Remove($complete);$grid.Columns.Remove('attendance');Write-UiPreview $form $PreviewPath}
- Write-Output 'TRIPS_UI_OK: budget limit, 2h fit, selected-only detail stage, optional event dates, editable times and manual details';$form.Dispose();$timer.Dispose();return
+ Write-Output 'TRIPS_UI_OK: budget limit, 2h fit, selected-only detail stage, optional events, under-budget advance, Tab/Enter entry navigation and manual details';$form.Dispose();$timer.Dispose();return
 }
 if(-not(Enter-WorkdayUi 'trips')){$form.Dispose();$timer.Dispose();return}
 try { Show-WorkdayDialog $form $OwnerHandle } finally { Exit-WorkdayUi;$timer.Dispose() }

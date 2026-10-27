@@ -121,6 +121,11 @@ try:
     try:trips.run_job(app,dict(operation='submit',review_id=review['review_id'],total=30000,rows=chosen));raise AssertionError('Review replay allowed')
     except ValueError:pass
     for key in ('2026-10-14','2026-10-15','2026-10-16'):attendance.append(dict(date=key,checkin='08:35',checkout='18:00',note=''))
+    under=trips.run_job(app,dict(operation='scan',month='2026-10',total=80000))
+    under_choices=[dict(date=r['date'],selected=r['date']=='2026-10-14',hours=2 if r['date']=='2026-10-14' else r['hours'],start_hour=r['start_hour'],location='부족 일정 장소',purpose='부족 일정 목적') for r in under['rows']]
+    before_count=len(posts)
+    under=trips.run_job(app,dict(operation='inspect',review_id=under['review_id'],total=80000,rows=under_choices))
+    assert under['ready'] and under['summary']['remaining_amount']==40000 and len(posts)==before_count,under
     partial=trips.run_job(app,dict(operation='scan',month='2026-10',total=80000))
     plans=[dict(date=r['date'],selected=r['date']>='2026-10-14',hours=2 if r['date']=='2026-10-14' else 4,start_hour=13,location='직접 입력 장소',purpose='등록할 목적') for r in partial['rows']]
     partial=trips.run_job(app,dict(operation='inspect',review_id=partial['review_id'],total=80000,rows=plans))
@@ -177,5 +182,5 @@ try:
      assert len(rejected)==1 and rejected[0]['status'].startswith('확인 필요:') and statuses[rows[0]['date']]['status']=='uncertain',rejected
      assert len(ot_records)==3 and ot_records[0]['purpose']=='수정한 새 근무목적'
     finally:driver.quit()
-   print('JOURNAL_BROWSER_OK: attendance month 10→9→10 with native clicks disabled; trip edit form without placeholders matched by labels; trip existing place/purpose loaded and updated with unchanged time / no duplicate; trip short-date history after POST verified / no duplicate; trip workflow + unchecked/blank-purpose exclusions and partial-budget warning + work-log direct form + user-supplied direct URL without menu links; overtime purpose absent from list / success page without history / observed-page refresh / two sequential POSTs / existing date purpose updated once / uncertain missing date added / detail purpose verified / no duplicate dates; no target-site requests')
+   print('JOURNAL_BROWSER_OK: attendance month 10→9→10 with native clicks disabled; underfilled schedule details allowed without POST; trip edit form without placeholders matched by labels; trip existing place/purpose loaded and updated with unchanged time / no duplicate; trip short-date history after POST verified / no duplicate; trip workflow + unchecked/blank-purpose exclusions and partial-budget warning + work-log direct form + user-supplied direct URL without menu links; overtime purpose absent from list / success page without history / observed-page refresh / two sequential POSTs / existing date purpose updated once / uncertain missing date added / detail purpose verified / no duplicate dates; no target-site requests')
 finally:server.shutdown();server.server_close();thread.join()

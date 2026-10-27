@@ -254,7 +254,7 @@ def run_job(app,job):
                 with app.file_lock('state'):
                     state=app.load_json(app.STATE_FILE,{});state['trip_review']=review;app.save_json(app.STATE_FILE,state)
                 summary=summarize(rows,job['total'],existing_amount)
-                ready=any(r['selected'] and not r['blocked'] for r in rows) and (summary['remaining_amount']==0 or not any(r['selected'] and not r.get('is_existing') for r in rows)) and not any(r.get('conflict') for r in rows)
+                ready=any(r['selected'] and not r['blocked'] for r in rows) and (summary['remaining_amount']>=0 or not any(r['selected'] and not r.get('is_existing') for r in rows)) and not any(r.get('conflict') for r in rows)
                 return dict(ok=True,review_id=review['id'],rows=rows,summary=summary,ready=ready,message='기존 출장 확인 완료. 선택 날짜의 장소·목적을 입력하세요.' if ready else '기존 출장 확인 완료. '+summary['message']+' · 날짜·시간 선택을 확인하세요.')
             if existing!=review['existing']:raise ValueError('기존 출장 내역이 바뀌었습니다. 다시 조회하세요.')
             with app.file_lock('state'):

@@ -218,6 +218,23 @@ class TripJobs(unittest.TestCase):
         self.assertTrue(result['ok']);self.assertEqual(result['rows'][0]['status'],'기존 내용 동일 · 유지')
         page.return_value.submit.assert_not_called()
 
+    def test_underfilled_schedule_can_reach_details_without_registering(self):
+        rows=self.prepare();driver=Mock()
+        rows[1]['selected']=False
+        with patch('monthly_reconcile._connect',return_value=(driver,Mock())),patch('monthly_reconcile._read_month',return_value=rows),patch('trip_site.TripPage') as page:
+            page.return_value.existing.return_value=[]
+            result=trips.run_job(app,dict(operation='inspect',review_id='fixture',total=50000,rows=rows))
+        self.assertTrue(result['ready']);self.assertEqual(result['summary']['remaining_amount'],30000)
+        self.assertIn('출장 추가 필요',result['summary']['message']);page.return_value.submit.assert_not_called()
+
+    def test_overfilled_schedule_still_cannot_reach_details(self):
+        rows=self.prepare();driver=Mock()
+        with patch('monthly_reconcile._connect',return_value=(driver,Mock())),patch('monthly_reconcile._read_month',return_value=rows),patch('trip_site.TripPage') as page:
+            page.return_value.existing.return_value=[]
+            result=trips.run_job(app,dict(operation='inspect',review_id='fixture',total=10000,rows=rows))
+        self.assertFalse(result['ready']);self.assertLess(result['summary']['remaining_amount'],0)
+        page.return_value.submit.assert_not_called()
+
     def test_changed_rules_invalidate_the_review(self):
         rows=self.prepare();state=app.load_json(app.STATE_FILE,{});state['day_rules']={};app.save_json(app.STATE_FILE,state)
         with patch.object(app,'create_driver') as driver:
