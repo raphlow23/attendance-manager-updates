@@ -83,7 +83,7 @@ $scan.Size = New-Object Drawing.Size(245, 35)
 $form.Controls.Add($scan)
 Add-Label '부서: 센터 / 시작: 18:00 / 종료: 실제 퇴근의 분 제외' 570 77 470
 $description = New-Object Windows.Forms.Label
-$description.Text = '조회 후 날짜별 근무목적을 입력하고 신청할 날짜를 체크하세요. 예: 19:55 퇴근 → 18:00~19:00 신청'
+$description.Text = '날짜를 체크하고 목적을 입력하세요. 기존 신청은 수정하고, 신청이 없으면 추가합니다.'
 $description.Location = New-Object Drawing.Point(20, 118)
 $description.Size = New-Object Drawing.Size(1020, 40)
 $form.Controls.Add($description)
@@ -115,7 +115,7 @@ $statusLabel.Size = New-Object Drawing.Size(1020, 32)
 $statusLabel.Anchor = 'Bottom, Left, Right'
 $form.Controls.Add($statusLabel)
 $submit = New-Object Windows.Forms.Button
-$submit.Text = '확인 — 선택 날짜 신청'
+$submit.Text = '확인 — 선택 날짜 신청·수정'
 $submit.Location = New-Object Drawing.Point(730, 558)
 $submit.Size = New-Object Drawing.Size(310, 42)
 $submit.Anchor = 'Bottom, Right'
@@ -179,7 +179,7 @@ $submit.Add_Click({
             $entries += @{ date = [string]$row.Cells['date'].Value; checkout = [string]$row.Cells['checkout'].Value; start = '18:00'; end = [string]$row.Cells['end'].Value; purpose = $purpose.Trim() }
         }
         if ($entries.Count -eq 0) { throw '신청할 날짜를 선택해 주세요.' }
-        $answer = [Windows.Forms.MessageBox]::Show("$script:scanMonth 선택 날짜 $($entries.Count)건을 신청합니다.`n부서: 센터 / 시작: 18:00 / 종료: 퇴근 시각의 분 제외`n입력한 근무목적과 날짜를 확인하셨나요?", '시간외근무 신청 확인', 'YesNo', 'Question')
+        $answer = [Windows.Forms.MessageBox]::Show("$script:scanMonth 선택 날짜 $($entries.Count)건을 사이트에서 확인하여 기존 신청은 수정하고 없으면 추가합니다.`n부서: 센터 / 시작: 18:00 / 종료: 퇴근 시각의 분 제외`n입력한 근무목적과 날짜를 확인하셨나요?", '시간외근무 신청 확인', 'YesNo', 'Question')
         if ($answer -ne 'Yes') { return }
         Invoke-OvertimeJob @{ operation = 'submit'; month = $script:scanMonth; rows = @($entries) }
     } catch { [void][Windows.Forms.MessageBox]::Show($_.Exception.Message, '신청 오류', 'OK', 'Error') }
@@ -212,8 +212,7 @@ $timer.Add_Tick({
                     if ($row.Cells['date'].Value -eq $entry.date) { $row.Cells['status'].Value = $entry.status; $row.Cells['choose'].Value = $false }
                 }
             }
-            foreach($key in $result.reconciled){foreach($row in $grid.Rows){if($row.Cells['date'].Value -eq $key){$row.Cells['status'].Value='사이트 기존 신청 확인';$row.Cells['choose'].Value=$false}}}
-            $statusLabel.Text = '처리 결과를 확인하세요. 확인 필요 항목은 사이트에서 먼저 확인한 후 다시 조회하세요.'
+            $statusLabel.Text = '처리 결과를 확인하세요. 목적 변경이나 재처리가 필요하면 날짜를 다시 체크해 신청·수정할 수 있습니다.'
         }
     } catch {
         $statusLabel.Text = $_.Exception.Message
