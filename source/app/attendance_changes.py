@@ -58,6 +58,9 @@ def save_rule(app, job):
             run = state.get('runs', {}).get(str(day), {}).get('checkout', {})
             if job['exclude_overtime'] and run.get('status') not in ('success', 'in_progress', 'uncertain'):
                 run.pop('target', None)
+        pending = set(state.get('reconcile_pending_months', []))
+        pending.update(str(day)[:7] for day in days)
+        state['reconcile_pending_months'] = sorted(pending)
         app.save_json(app.STATE_FILE, state)
     app.log_event(f'제외일 {len(days)}개 휴가={job["vacation"]}, 연장 제외={job["exclude_overtime"]} 저장')
     return {'ok': True, 'message': f'선택 날짜 {len(days)}개의 제외 설정을 저장했습니다. 기존 사이트 기록은 바뀌지 않습니다.'}
@@ -124,7 +127,20 @@ def correct_reviewed(app, page, job, today):
 def run_job(app, job):
     operation = job.get('operation')
     if operation == 'rules':
-        return save_rule(app, job)
+        result = save_rule(app, job)
+        from monthly_reconcile import run
+        months = sorted({str(day)[:7] for day in job.get('dates', [job.get('date')])})
+        try:
+            synced = run(app, months)
+            result['message'] = '제외일 저장 완료. ' + synced['message']
+        except Exception as error:
+            app.log_event(f'제외일 저장 후 월 자동 정리 보류: {type(error).__name__}: {error}')
+            result['message'] = '제외일은 저장했습니다. 월 자동 정리 보류: ' + str(error)[:700]
+            result['reconcile_ok'] = False
+        return result
+    if operation == 'reconcile':
+        from monthly_reconcile import run
+        return run(app, [job['month']])
     if operation not in ('scan', 'correct'):
         raise ValueError('지원하지 않는 근태 작업입니다.')
     if operation == 'correct':

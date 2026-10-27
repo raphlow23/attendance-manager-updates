@@ -17,7 +17,7 @@ function Label($text,$x,$y,$width) {
 function Button($text,$x,$y,$width) {
  $c=New-Object Windows.Forms.Button; $c.Text=$text; $c.Location=New-Object Drawing.Point($x,$y); $c.Size=New-Object Drawing.Size($width,38); $form.Controls.Add($c); return $c
 }
-Label '휴가·제외일 설정은 자동 등록에 반영됩니다. 기존 사이트 기록은 아래에서 별도로 정정하세요.' 20 15 995
+Label '휴가·제외일을 저장하면 해당 월 기록을 자동 정리합니다. 연장 제외일은 09:00~18:00입니다.' 20 15 730
 Label '설정 날짜' 20 61 85
 $dayPicker=New-Object Windows.Forms.DateTimePicker
 $dayPicker.Format='Custom'; $dayPicker.CustomFormat='yyyy-MM-dd'
@@ -31,7 +31,7 @@ Label '체크를 해제하고 저장하면 제외를 해제합니다. 연장 제
 Label '조회 월' 20 147 85
 $month=New-Object Windows.Forms.ComboBox; $month.DropDownStyle='DropDownList'; $month.Location=New-Object Drawing.Point(110,140); $month.Width=180
 foreach($item in (Get-WorkdayMonthLabels (Get-Date))) { [void]$month.Items.Add($item) }; $month.SelectedIndex=0; $form.Controls.Add($month)
-$scan=Button '사이트 근태 조회' 310 136 230
+$scan=Button '선택 월 조회·자동 정리' 310 136 230
 Label '계정은 자동관리 설정에 저장한 ID/PW를 사용합니다.' 560 147 450
 $grid=New-Object Windows.Forms.DataGridView
 $grid.Location=New-Object Drawing.Point(20,190); $grid.Size=New-Object Drawing.Size(990,260)
@@ -77,6 +77,7 @@ foreach($control in @($form.Controls)){
  elseif($control.Top -ge 260 -and $control.Top -le 300){$control.Top+=75}
 }
 $grid.Top=390;$grid.Height=180;$summaryLabel.Top=575
+$grid.Columns['checkin'].HeaderText='출근시간';$grid.Columns['checkout'].HeaderText='퇴근시간'
 $vacation.Location=New-Object Drawing.Point(245,302);$exclude.Top=302;$saveRule.Top=298
 $rulesGrid.Location=New-Object Drawing.Point(650,45);$rulesGrid.Size=New-Object Drawing.Size(360,245)
 $rulesGrid.Columns['date'].HeaderText='저장 날짜';$rulesGrid.Columns['date'].FillWeight=130
@@ -126,7 +127,7 @@ function Render-Calendar {
   $button.ForeColor=[Drawing.ColorTranslator]::FromHtml('#343C46')
  }
  $chosenLabel.Text="선택 $($script:chosenDates.Count)개 · 재클릭하면 해제"
- $saveRule.Text="선택 $($script:chosenDates.Count)개 설정 저장"
+ $saveRule.Text="선택 $($script:chosenDates.Count)개 저장·월 자동정리"
 }
 $calendarPrev.Add_Click({$script:calendarMonth=$script:calendarMonth.AddMonths(-1);Render-Calendar})
 $calendarNext.Add_Click({$script:calendarMonth=$script:calendarMonth.AddMonths(1);Render-Calendar})
@@ -196,7 +197,7 @@ $saveRule.Add_Click({try {
  Start-Job @{operation='rules';dates=@($script:chosenDates|Sort-Object);vacation=$vacation.Checked;exclude_overtime=$exclude.Checked}
 }catch{ $status.Text=$_.Exception.Message }})
 function Selected-Month { [DateTime]::ParseExact([string]$month.SelectedItem,'yyyy년 MM월',[Globalization.CultureInfo]::InvariantCulture).ToString('yyyy-MM') }
-$scan.Add_Click({try {$summaryLabel.Text='사이트 연장 기록: 조회 중';$grid.Rows.Clear();$script:snapshot=@{};Start-Job @{operation='scan';month=(Selected-Month)}}catch{$status.Text=$_.Exception.Message}})
+$scan.Add_Click({try {$summaryLabel.Text='월 기록 조회·자동 정리 중';$grid.Rows.Clear();$script:snapshot=@{};Start-Job @{operation='reconcile';month=(Selected-Month)}}catch{$status.Text=$_.Exception.Message}})
 $month.Add_SelectedIndexChanged({$grid.Rows.Clear();$script:snapshot=@{};$apply.Enabled=$false;$selected.Text='조회 후 행 선택';$summaryLabel.Text='사이트 연장 기록: 해당 월을 조회하세요.'})
 $grid.Add_SelectionChanged({
  if($grid.SelectedRows.Count -eq 0) {$apply.Enabled=$false;return}
@@ -223,14 +224,14 @@ $timer.Add_Tick({
  try {
   $result=Get-Content -LiteralPath ($script:jobPath+'.result.json') -Raw -Encoding UTF8|ConvertFrom-Json
   if(-not $result.ok){throw $result.error}
-  if($script:operation -eq 'scan') {
+  if($script:operation -in @('scan','reconcile')) {
    $grid.Rows.Clear();$script:snapshot=@{}
    foreach($row in $result.rows){
     $script:snapshot[$row.date]=@{checkin=$row.checkin;checkout=$row.checkout;note=$row.note}
     $ruleText=if($row.rule.manual_hold){'자동 처리 보류 · 사이트 확인'}elseif($row.rule.vacation){'휴가'}elseif($row.rule.exclude_overtime){'연장 제외'}else{''}
     [void]$grid.Rows.Add($row.date,$row.checkin,$row.checkout,$ruleText,$row.note)
    }
-   $status.Text='정정할 행을 선택하고 실제 시간과 사유를 입력하세요. 빈 입력칸은 기존 값을 유지합니다.'
+   $status.Text=if($script:operation -eq 'reconcile'){$result.message}else{'월 기록 조회 완료'}
    $s=$result.summary
    $summaryLabel.Text="사이트 연장 기록 $($s.recorded_days)일 / 설정 기준 $($s.target_days)일 · 부족 $($s.remaining_days)일 · 초과 $($s.excess_days)일 · 제외일 중 연장 기록 $($s.excluded_record_days)일 (확인 필요)"
   }else{
@@ -251,6 +252,26 @@ $form.Add_FormClosing({if($script:worker){$_.Cancel=$true;$status.Text='진행 �
 . (Join-Path $PSScriptRoot 'theme.ps1')
 Set-UiTheme $form
 $apply.BackColor=$script:UiOrange
+# Automatic month processing is the main flow. Manual correction remains an
+# optional fallback for resolving uncertain saves without cluttering the screen.
+$manualControls=@($form.Controls|Where-Object{$_ -ne $status -and $_.Top -ge 615})
+foreach($control in $manualControls){$form.Controls.Remove($control)}
+$form.Height=770;$status.Top=620;$status.Height=95
+$toggleManual=Button '개별 정정 펼치기' 770 2 240
+$toggleManual.FlatStyle='Flat';$toggleManual.FlatAppearance.BorderSize=0
+$toggleManual.BackColor=$script:UiInk;$toggleManual.ForeColor=[Drawing.Color]::White
+$script:manualExpanded=$false
+$toggleManual.Add_Click({
+ $script:manualExpanded=-not $script:manualExpanded
+ if($script:manualExpanded){
+  foreach($control in $manualControls){$form.Controls.Add($control)}
+  $form.Height=880;$status.Top=764;$status.Height=65;$toggleManual.Text='개별 정정 접기'
+ }else{
+  foreach($control in $manualControls){$form.Controls.Remove($control)}
+  $form.Height=770;$status.Top=620;$status.Height=95;$toggleManual.Text='개별 정정 펼치기'
+ }
+})
+$status.Text='달력 저장 또는 선택 월 조회·자동 정리로 처리합니다. 완료 후 시간외근무 신청에서 해당 월을 조회하세요.'
 Render-Calendar
 if($SelfTest){
  if($dayPicker.CustomFormat -ne 'yyyy-MM-dd' -or $grid.Columns.Count -ne 5){throw '정정 화면 구조 오류'}

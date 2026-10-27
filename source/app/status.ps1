@@ -33,6 +33,7 @@ function Update-WorkdayStatus {
                     if ($value.last_login_verified_utc) { $login = [DateTime]::Parse($value.last_login_verified_utc).ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss') }
                     $lines += "응답: $beat / 사이트 연결: $($value.network_online) / 실제 로그인 확인: $login"
                     $lines += "출근: $($value.jobs.checkin.stage) / 퇴근: $($value.jobs.checkout.stage)"
+                    if ($value.jobs.monthly_sync) { $lines += "월 자동 정리·누락 보완: $($value.jobs.monthly_sync.stage) / $($value.jobs.monthly_sync.error)" }
                 }
             } catch { $lines += "$($spec[1]): 상태를 읽는 중입니다." }
         } else { $lines += "$($spec[1]): 아직 실행 기록이 없습니다." }

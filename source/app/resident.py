@@ -76,6 +76,27 @@ def enabled(app):
             and not any((Path(app.DATA_DIR) / name).exists() for name in ('automation.stop', 'update.pause')))
 
 
+class MonthlyPass:
+    """At most three spaced attempts for each check-in/checkout phase."""
+    def __init__(self):
+        self.key = None
+        self.attempts = 0
+        self.next_at = 0
+        self.result = None
+
+    def ready(self, day, phase, now):
+        key = (str(day), phase)
+        if self.key != key:
+            self.key, self.attempts, self.next_at, self.result = key, 0, 0, None
+        failed = not self.result or not self.result.get('ok') or bool(self.result.get('warnings'))
+        return self.attempts < 3 and now >= self.next_at and (self.attempts == 0 or failed)
+
+    def begin(self, now):
+        self.attempts += 1
+        self.next_at = now + 60
+        self.result = None
+
+
 def run(app):
     app.HEALTH = health = Health(app)
     heartbeat = threading.Thread(target=health.write_loop, name='heartbeat', daemon=True)
@@ -84,6 +105,8 @@ def run(app):
     current_day = None
     first_day = True
     last_probe = -float('inf')
+    maintenance = None
+    monthly_pass = MonthlyPass()
 
     def launch(mode, immediate):
         def action():
@@ -101,7 +124,7 @@ def run(app):
         while enabled(app):
             today = date.today()
             if current_day != today:
-                if any(t.is_alive() for t in threads.values()):
+                if any(t.is_alive() for t in threads.values()) or (maintenance and maintenance.is_alive()):
                     time.sleep(1)
                     continue
                 current_day, threads = today, {}
@@ -114,6 +137,13 @@ def run(app):
                 last_probe = time.monotonic()
             if app.is_workday(today) and health.network_online:
                 for mode in ('checkin', 'checkout'):
+                    if mode == 'checkout':
+                        if 'checkin' not in threads or threads['checkin'].is_alive():
+                            continue
+                        with app.file_lock('state'):
+                            ci = app.load_json(app.STATE_FILE, {}).get('runs', {}).get(str(today), {}).get('checkin', {})
+                        if ci.get('status') != 'success':
+                            continue
                     if mode not in threads:
                         launch(mode, immediate=(mode == 'checkin' and first_day))
                     elif not threads[mode].is_alive():
@@ -123,6 +153,25 @@ def run(app):
                                 and datetime.now() >= datetime.fromisoformat(record['retry_at'])):
                             launch(mode, immediate=(mode == 'checkin'))
                 first_day = False
+                # Reconcile after check-in and after checkout. Each phase has
+                # bounded retries; UI rule saves also trigger an immediate pass.
+                if not threads['checkin'].is_alive() and not (maintenance and maintenance.is_alive()):
+                    with app.file_lock('state'):
+                        day_runs = app.load_json(app.STATE_FILE, {}).get('runs', {}).get(str(today), {})
+                        checkin = day_runs.get('checkin', {})
+                    if checkin.get('status') == 'success' and hasattr(app, 'run_monthly_reconcile'):
+                        phase = 'checkout' if day_runs.get('checkout', {}).get('status') == 'success' else 'checkin'
+                        now = time.monotonic()
+                        if monthly_pass.ready(today, phase, now):
+                            monthly_pass.begin(now)
+                            def reconcile():
+                                try:
+                                    monthly_pass.result = app.run_monthly_reconcile()
+                                except Exception as error:
+                                    monthly_pass.result = {'ok': False, 'error': str(error)}
+                                    app.log_event(f'월 정리 오류: {type(error).__name__}: {error}')
+                            maintenance = threading.Thread(target=reconcile, name='monthly_sync', daemon=True)
+                            maintenance.start()
             time.sleep(1)
     finally:
         health.shutdown.set()
@@ -131,4 +180,6 @@ def run(app):
         # the worker's process tree if a browser action has not returned yet.
         for thread in threads.values():
             thread.join(timeout=2)
+        if maintenance:
+            maintenance.join(timeout=2)
         app.HEALTH = None

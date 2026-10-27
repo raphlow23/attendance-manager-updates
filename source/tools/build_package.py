@@ -21,6 +21,7 @@ def build():
     files += [ROOT / '근태매니저.exe', ROOT / 'app' / '근태매니저.exe']
     files.append(ROOT / 'app' / 'attendance.ico')
     files += [ROOT / 'app' / name for name in ('ui-host.ps1', 'task-control.ps1', 'attendance_changes.py', 'corrections.ps1')]
+    files.append(ROOT / 'app' / 'monthly_reconcile.py')
     files += [ROOT / 'app' / name for name in ('install-integration.ps1','uninstall.ps1','제거.exe')]
     files.sort(key=lambda p: p.relative_to(ROOT).as_posix())
     manifest = ROOT / 'MANIFEST-SHA256.txt'

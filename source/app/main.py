@@ -523,8 +523,32 @@ def run_startup():
             state = load_json(STATE_FILE, {"runs": {}})
             choose_target("checkout", today, state)
     checkin_ok = run_scheduled("checkin", immediate=True)
+    if not checkin_ok:
+        return False
+    run_monthly_reconcile()
     checkout_ok = run_scheduled("checkout")
     return checkin_ok and checkout_ok
+
+
+def run_monthly_reconcile():
+    """One bounded, serialized maintenance pass for the declared fictional site."""
+    from monthly_reconcile import run
+    with file_lock('state'):
+        state = load_json(STATE_FILE, {})
+        months = set(state.get('reconcile_pending_months', []))
+        months.add(date.today().strftime('%Y-%m'))
+    health_phase('monthly_sync', 'reconciling', 1800)
+    try:
+        result = run(sys.modules[__name__], sorted(months), background=True)
+        if result.get('warnings'):
+            health_phase('monthly_sync', 'failed', error='; '.join(result['warnings'])[:700])
+        else:
+            health_phase('monthly_sync', 'success')
+        return result
+    except Exception as error:
+        log_event(f'월 자동 정리 보류: {type(error).__name__}: {error}')
+        health_phase('monthly_sync', 'failed', error=str(error)[:700])
+        return {'ok': False, 'error': str(error)[:700]}
 
 
 
