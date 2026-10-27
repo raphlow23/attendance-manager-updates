@@ -43,7 +43,8 @@ function Write-UiPreview($Window, [string]$Path) {
                     } finally { $headerBrush.Dispose(); $whiteBrush.Dispose(); $cellInk.Dispose() }
                 } elseif ($child -isnot [Windows.Forms.Panel]) {
                     $text = $child.Text
-                    if ($child -is [Windows.Forms.DateTimePicker]) { $text = $child.Value.ToString('yyyy년 MM월') }
+                    if ($child -is [Windows.Forms.DateTimePicker]) { $text = $child.Value.ToString($child.CustomFormat) }
+                    if ($child -is [Windows.Forms.CheckBox]) { $text = $(if ($child.Checked) { '☑ ' } else { '☐ ' }) + $text }
                     $format = New-Object Drawing.StringFormat
                     try {
                         $format.LineAlignment = [Drawing.StringAlignment]::Center

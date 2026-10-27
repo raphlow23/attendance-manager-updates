@@ -37,15 +37,21 @@ function Open-Feature([string]$Name) {
 $attendance = New-Object Windows.Forms.Button
 $attendance.Text = '근태 자동관리 설정'
 $attendance.Location = New-Object Drawing.Point(50, 289)
-$attendance.Size = New-Object Drawing.Size(345, 52)
+$attendance.Size = New-Object Drawing.Size(235, 52)
 $attendance.Add_Click({ Open-Feature 'control.ps1' })
 $form.Controls.Add($attendance)
 $overtime = New-Object Windows.Forms.Button
 $overtime.Text = '시간외근무 신청 (월별 조회)'
-$overtime.Location = New-Object Drawing.Point(450, 289)
-$overtime.Size = New-Object Drawing.Size(345, 52)
+$overtime.Location = New-Object Drawing.Point(560, 289)
+$overtime.Size = New-Object Drawing.Size(235, 52)
 $overtime.Add_Click({ Open-Feature 'overtime.ps1' })
 $form.Controls.Add($overtime)
+$corrections = New-Object Windows.Forms.Button
+$corrections.Text = '휴가·제외일 / 근태 정정'
+$corrections.Location = New-Object Drawing.Point(305, 289)
+$corrections.Size = New-Object Drawing.Size(235, 52)
+$corrections.Add_Click({ Open-Feature 'corrections.ps1' })
+$form.Controls.Add($corrections)
 $hint = New-Object Windows.Forms.Label
 $hint.Text = '자동 실행을 멈추거나 재개하려면 근태 자동관리 설정을 열어 주세요.'
 $hint.Location = New-Object Drawing.Point(25, 437)
@@ -64,13 +70,13 @@ $health.Text = '실행 상태 · 로그인 결과 · 오류 로그'
 $health.Location = New-Object Drawing.Point(430, 378); $health.Size = New-Object Drawing.Size(385, 42)
 $health.Add_Click({ Open-Feature 'status.ps1' })
 $form.Controls.Add($health)
-foreach ($card in @(@(30, '01', '근태 자동관리', "기존 예약 출퇴근 등록`n누락 퇴근 보완 · 늦은 출근 보정", '#4BAFC9'), @(430, '02', '시간외근무 신청', "선택한 월의 실제 연장일 조회`n날짜별 근무목적 입력 후 신청", '#55B6A6'))) {
+foreach ($card in @(@(30, '01', '근태 자동관리', "예약 출퇴근 등록`n자동 실행 설정", '#4BAFC9'), @(290, '02', '휴가·근태 정정', "휴가 · 연장근무 제외일`n실제 근무 기록 확인 및 정정", '#55B6A6'), @(550, '03', '시간외근무 신청', "수정 후 해당 월 다시 조회`n근무목적 입력 후 신청", '#EB8345'))) {
     $panel = New-Object Windows.Forms.Panel
     $panel.Location = New-Object Drawing.Point($card[0], 106)
-    $panel.Size = New-Object Drawing.Size(385, 253)
+    $panel.Size = New-Object Drawing.Size(265, 253)
     $panel.BackColor = [Drawing.Color]::White
     $bar = New-Object Windows.Forms.Label
-    $bar.Location = New-Object Drawing.Point(0, 0); $bar.Size = New-Object Drawing.Size(385, 7)
+    $bar.Location = New-Object Drawing.Point(0, 0); $bar.Size = New-Object Drawing.Size(265, 7)
     $bar.BackColor = [Drawing.ColorTranslator]::FromHtml($card[4])
     $panel.Controls.Add($bar)
     $number = New-Object Windows.Forms.Label
@@ -78,11 +84,11 @@ foreach ($card in @(@(30, '01', '근태 자동관리', "기존 예약 출퇴근 
     $number.ForeColor = $bar.BackColor; $number.Location = New-Object Drawing.Point(20, 22); $number.Size = New-Object Drawing.Size(90, 53)
     $panel.Controls.Add($number)
     $heading = New-Object Windows.Forms.Label
-    $heading.Text = $card[2]; $heading.Font = New-Object Drawing.Font('Malgun Gothic', 16, [Drawing.FontStyle]::Bold)
-    $heading.Location = New-Object Drawing.Point(20, 83); $heading.Size = New-Object Drawing.Size(345, 38)
+    $heading.Text = $card[2]; $heading.Font = New-Object Drawing.Font('Malgun Gothic', 14, [Drawing.FontStyle]::Bold)
+    $heading.Location = New-Object Drawing.Point(20, 83); $heading.Size = New-Object Drawing.Size(230, 38)
     $panel.Controls.Add($heading)
     $detail = New-Object Windows.Forms.Label
-    $detail.Text = $card[3]; $detail.Location = New-Object Drawing.Point(20, 127); $detail.Size = New-Object Drawing.Size(345, 50)
+    $detail.Text = $card[3]; $detail.Location = New-Object Drawing.Point(20, 127); $detail.Size = New-Object Drawing.Size(230, 50)
     $detail.ForeColor = [Drawing.ColorTranslator]::FromHtml('#788592')
     $panel.Controls.Add($detail)
     $form.Controls.Add($panel); $panel.SendToBack()
@@ -92,7 +98,8 @@ Set-UiTheme $form
 $overtime.BackColor = $script:UiOrange
 $security.BackColor = $script:UiInk
 $health.BackColor = $script:UiInk
-$attendance.BringToFront(); $overtime.BringToFront()
+$attendance.Location = New-Object Drawing.Point(45,289)
+$attendance.BringToFront(); $corrections.BringToFront(); $overtime.BringToFront()
 if ($SelfTest) { Write-UiPreview $form $PreviewPath; Write-Output 'LAUNCHER_UI_OK'; $form.Dispose(); exit 0 }
 if (-not (Enter-WorkdayUi 'launcher')) { $form.Dispose(); exit 0 }
 . (Join-Path $PSScriptRoot 'install-integration.ps1')

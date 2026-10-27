@@ -1,6 +1,6 @@
 ﻿function New-WorkdayFeatureHosts([string]$Root) {
     $hosts = @{}
-    foreach ($name in @('control.ps1','overtime.ps1','status.ps1','보안안내.ps1')) {
+    foreach ($name in @('control.ps1','corrections.ps1','overtime.ps1','status.ps1','보안안내.ps1')) {
         $space = [RunspaceFactory]::CreateRunspace()
         $space.ApartmentState = 'STA'; $space.ThreadOptions = 'ReuseThread'; $space.Open()
         $pipeline = [PowerShell]::Create(); $pipeline.Runspace = $space

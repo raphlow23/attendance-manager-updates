@@ -128,6 +128,15 @@ class AttendancePage:
                 return False
         else:
             raise ValueError("Unknown attendance field")
+        return self.correct(day, {field: target}, before)
+
+    def correct(self, day, targets, expected):
+        """User-reviewed correction; preserve notes and reject stale snapshots."""
+        if not targets or set(targets) - {'checkin', 'checkout'}:
+            raise ValueError('정정할 출퇴근 시간을 확인하세요.')
+        before = self.record(day)
+        if any(before[k] != expected[k] for k in ('checkin', 'checkout', 'note')):
+            raise RuntimeError('조회 후 기록이 변경되었습니다. 다시 조회하세요.')
         controls = before["edit_cell"].find_elements(By.CSS_SELECTOR, "a, button, input")
         one([c for c in controls if label(c) == "수정"], "해당 날짜의 수정 버튼").click()
 
@@ -152,16 +161,21 @@ class AttendancePage:
         displayed_checkin = parse_time(":".join(i.get_attribute("value") for i in pairs[0]))
         if displayed_checkin != parse_time(before["checkin"]):
             raise RuntimeError("선택한 날짜와 수정 화면의 출근 시간이 다릅니다.")
-        target_inputs = pairs[0 if field == "checkin" else 1]
+        displayed_checkout = parse_time(":".join(i.get_attribute("value") for i in pairs[1]))
+        if displayed_checkout != parse_time(before["checkout"]):
+            raise RuntimeError("선택한 날짜와 수정 화면의 퇴근 시간이 다릅니다.")
+        target_inputs = [i for field in targets for i in pairs[0 if field == 'checkin' else 1]]
         untouched = [i for i in row.find_elements(By.CSS_SELECTOR, "input, textarea, select") if i not in target_inputs]
         values = [(i, i.get_attribute("value")) for i in untouched]
-        for element, value in zip(target_inputs, (target.hour, target.minute)):
-            element.clear()
-            element.send_keys(f"{value:02d}")
+        for field, target in targets.items():
+            inputs = pairs[0 if field == 'checkin' else 1]
+            for element, value in zip(inputs, (target.hour, target.minute)):
+                element.clear()
+                element.send_keys(f"{value:02d}")
+            if [i.get_attribute('value').zfill(2) for i in inputs] != [f'{target.hour:02d}', f'{target.minute:02d}']:
+                raise RuntimeError('입력한 시간이 일치하지 않아 저장을 중단합니다.')
         if any(i.get_attribute("value") != value for i, value in values):
             raise RuntimeError("대상 외 입력값이 바뀌어 저장을 중단합니다.")
-        if [i.get_attribute("value").zfill(2) for i in target_inputs] != [f"{target.hour:02d}", f"{target.minute:02d}"]:
-            raise RuntimeError("입력한 시간이 일치하지 않아 저장을 중단합니다.")
         current = self.record(day)
         if any(current[key] != before[key] for key in ("checkin", "checkout", "note")):
             raise RuntimeError("다른 곳에서 근태 기록이 변경되어 저장을 중단합니다.")
@@ -175,9 +189,9 @@ class AttendancePage:
                 pass
             try:
                 after = self.record(day)
-                other = "checkout" if field == "checkin" else "checkin"
-                return (parse_time(after[field]) == (target.hour, target.minute)
-                        and after[other] == before[other] and after["note"] == before["note"])
+                return (all(parse_time(after[field]) == (target.hour, target.minute) for field, target in targets.items())
+                        and all(after[field] == before[field] for field in ('checkin', 'checkout') if field not in targets)
+                        and after['note'] == before['note'])
             except StaleElementReferenceException:
                 return False
 

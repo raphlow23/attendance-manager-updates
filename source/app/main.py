@@ -29,6 +29,7 @@ SOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
 if SOURCE_DIR not in sys.path:
     sys.path.insert(0, SOURCE_DIR)
 from attendance_recovery import correct_late_checkin, repair_missing_checkouts
+from attendance_changes import blocked, rule_for
 
 APP_DIR = (
     os.path.dirname(os.path.abspath(sys.executable))
@@ -180,11 +181,12 @@ def get_overtime_dates(day, state):
         # Existing monthly dates/targets are frozen. Changes take effect when
         # a new month's plan is generated, preserving past attendance.
         plans.setdefault(month_key, {"monthly_hours": len(months[month_key]), "daily_hours": 1})
-        return set(months[month_key])
+        return {key for key in months[month_key] if not blocked(state, key) and not rule_for(state, key).get('exclude_overtime')}
 
     settings = load_json(SETTINGS_FILE, {})
     hours, daily = validate_overtime_capacity(settings, day)
-    selected = sorted(random.SystemRandom().sample(eligible_days(day), hours // daily))
+    available = [key for key in eligible_days(day) if not blocked(state, key) and not rule_for(state, key).get('exclude_overtime')]
+    selected = sorted(random.SystemRandom().sample(available, min(hours // daily, len(available))))
     state["overtime_month"] = month_key
     state["overtime_dates"] = selected
     months[month_key] = selected
@@ -198,8 +200,13 @@ def get_overtime_dates(day, state):
 def choose_target(mode, today, state):
     day_key = today.isoformat()
     action_state = state.setdefault("runs", {}).setdefault(day_key, {}).setdefault(mode, {})
+    if blocked(state, today):
+        return None, dict(action_state, status='success')
     if action_state.get("status") in {"success", "in_progress", "uncertain"}:
         return None, action_state
+    if (mode == 'checkout' and rule_for(state, today).get('exclude_overtime')
+            and action_state.get('target') and datetime.fromisoformat(action_state['target']).hour >= 19):
+        action_state.pop('target', None)
     if action_state.get("target"):
         return datetime.fromisoformat(action_state["target"]), action_state
 
@@ -294,7 +301,7 @@ def recover_previous_days(driver):
                     and runs.get("checkout", {}).get("status") != "success"):
                 pending.add(day_key)
     repair_missing_checkouts(
-        driver, date.today(), is_workday, recovery_target, record_recovery,
+        driver, date.today(), lambda day: is_workday(day) and not blocked(state, day), recovery_target, record_recovery,
         log_event, sorted(pending),
     )
 
@@ -449,6 +456,12 @@ def run_scheduled(mode, immediate=False):
                 return False
             with file_lock("state"):
                 current_state = load_json(STATE_FILE, {"runs": {}})
+                if blocked(current_state, today):
+                    return True
+                if mode == 'checkout' and rule_for(current_state, today).get('exclude_overtime'):
+                    revised, _ = choose_target(mode, today, current_state)
+                    if revised is not None:
+                        target = revised
                 current_run = current_state.get("runs", {}).get(today.isoformat(), {}).get(mode, {})
                 if current_run.get("status") == "success":
                     return True
@@ -469,6 +482,12 @@ def run_scheduled(mode, immediate=False):
             return False
         with file_lock("state"):
             state = load_json(STATE_FILE, {"runs": {}})
+            if blocked(state, today):
+                return True
+            if mode == 'checkout' and rule_for(state, today).get('exclude_overtime'):
+                revised, _ = choose_target(mode, today, state)
+                if revised is not None and revised > datetime.now():
+                    return False
             day_runs = state.setdefault("runs", {}).setdefault(today.isoformat(), {})
             if mode == "checkin" and day_runs.get("checkout", {}).get("status") == "success":
                 return True
@@ -558,15 +577,20 @@ def main():
         with file_lock('resident', timeout=0):
             run(sys.modules[__name__])
         return
-    if "--overtime-job" in sys.argv:
+    if "--overtime-job" in sys.argv or "--attendance-job" in sys.argv:
         from pathlib import Path
-        from overtime_requests import run_job
-        path = Path(sys.argv[sys.argv.index("--overtime-job") + 1]).resolve()
+        flag = '--attendance-job' if '--attendance-job' in sys.argv else '--overtime-job'
+        if flag == '--attendance-job':
+            from attendance_changes import run_job
+        else:
+            from overtime_requests import run_job
+        path = Path(sys.argv[sys.argv.index(flag) + 1]).resolve()
         if path.parent != Path(DATA_DIR).resolve() or path.suffix != '.json':
             raise ValueError('작업 파일은 프로그램 데이터 폴더에 있어야 합니다.')
         try:
             result = run_job(sys.modules[__name__], json.loads(path.read_text(encoding='utf-8-sig')))
         except Exception as error:
+            log_event(f'사용자 작업 오류: {type(error).__name__}: {error}')
             result = {'ok': False, 'error': str(error)[:1500]}
         save_json(str(path) + '.result.json', result)
         raise SystemExit(0 if result['ok'] else 1)
