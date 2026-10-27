@@ -23,6 +23,7 @@ def build():
     files += [ROOT / 'app' / name for name in ('ui-host.ps1', 'task-control.ps1', 'attendance_changes.py', 'corrections.ps1')]
     files.append(ROOT / 'app' / 'monthly_reconcile.py')
     files.append(ROOT / 'app' / 'site_access.py')
+    files += [ROOT / 'app' / name for name in ('business_trips.py','trip_site.py','trips.ps1')]
     files += [ROOT / 'app' / name for name in ('install-integration.ps1','uninstall.ps1','제거.exe')]
     files.sort(key=lambda p: p.relative_to(ROOT).as_posix())
     manifest = ROOT / 'MANIFEST-SHA256.txt'

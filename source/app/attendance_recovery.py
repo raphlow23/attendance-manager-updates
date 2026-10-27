@@ -55,6 +55,18 @@ def input_value(element):
     return str((getter('value') if callable(getter) else element.get_attribute('value')) or '')
 
 
+def activate_control(driver,control):
+    href=control.get_attribute('href')
+    if isinstance(href,str) and href:
+        source=urlsplit(driver.current_url);target=urlsplit(href)
+        if (source.scheme,source.netloc)!=(target.scheme,target.netloc):raise RuntimeError('다른 사이트로 이동하는 링크는 열지 않습니다.')
+        driver.get(href)
+    else:
+        execute=getattr(driver,'execute_script',None)
+        if callable(execute):execute('arguments[0].click()',control)
+        else:control.click()
+
+
 SET_TIME_INPUTS = '''
 const inputs=arguments[0], values=arguments[1];
 if(inputs.length!==2 || values.length!==2) throw new Error('Invalid time input pair');

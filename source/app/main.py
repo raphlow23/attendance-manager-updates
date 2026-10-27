@@ -636,10 +636,12 @@ def main():
         with file_lock('resident', timeout=0):
             run(sys.modules[__name__])
         return
-    if "--overtime-job" in sys.argv or "--attendance-job" in sys.argv:
+    if "--overtime-job" in sys.argv or "--attendance-job" in sys.argv or '--trip-job' in sys.argv:
         from pathlib import Path
-        flag = '--attendance-job' if '--attendance-job' in sys.argv else '--overtime-job'
-        if flag == '--attendance-job':
+        flag = '--trip-job' if '--trip-job' in sys.argv else '--attendance-job' if '--attendance-job' in sys.argv else '--overtime-job'
+        if flag=='--trip-job':
+            from business_trips import run_job
+        elif flag == '--attendance-job':
             from attendance_changes import run_job
         else:
             from overtime_requests import run_job

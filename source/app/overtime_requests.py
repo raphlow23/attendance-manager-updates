@@ -3,12 +3,13 @@ import calendar
 import re
 from datetime import date
 
-from selenium.common.exceptions import NoAlertPresentException, StaleElementReferenceException, TimeoutException
+from selenium.common.exceptions import NoAlertPresentException, StaleElementReferenceException, TimeoutException, UnexpectedAlertPresentException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import Select, WebDriverWait
 
-from attendance_recovery import AttendancePage, label, one, parse_time, visible
+from attendance_recovery import AttendancePage, label, one, parse_time, visible,activate_control,input_value
+from trip_site import set_value,select_text
 
 WEEKDAYS = '월화수목금토일'
 
@@ -39,12 +40,13 @@ def collect_month(driver, month, today, is_workday):
     return rows
 
 
-def select_number(element, number):
+def select_number(element, number,driver=None):
     options = Select(element).options
     matches = [o for o in options if re.fullmatch(fr'0*{number}\s*[월일시분]?', o.text.strip())]
     if len(matches) != 1:
         raise RuntimeError(f'선택값 {number}을 확인하지 못했습니다.')
-    Select(element).select_by_value(matches[0].get_attribute('value'))
+    if driver is not None:set_value(driver,element,matches[0].get_attribute('value'))
+    else:Select(element).select_by_value(matches[0].get_attribute('value'))
 
 
 class OvertimePage:
@@ -53,12 +55,13 @@ class OvertimePage:
         self.wait = WebDriverWait(driver, 20)
 
     def open(self):
-        one(self.driver.find_elements(By.LINK_TEXT, '근무일지'), '근무일지 메뉴').click()
+        activate_control(self.driver,one(self.driver.find_elements(By.LINK_TEXT, '근무일지'), '근무일지 메뉴'))
+        if '시간외근무신청서' in re.sub(r'\s+','',self.driver.find_element(By.TAG_NAME,'body').text):return
         try:
             control = self.wait.until(lambda _: self.entry_control())
         except TimeoutException as error:
             raise RuntimeError('근무일지에서 시간외근무 신청 바로가기를 찾지 못했습니다. 사이트 메뉴와 접근 권한을 확인하세요.') from error
-        control.click()
+        activate_control(self.driver,control)
         self.wait.until(lambda d: '시간외근무신청서' in re.sub(r'\s+', '', d.find_element(By.TAG_NAME, 'body').text))
 
     def entry_control(self):
@@ -84,7 +87,7 @@ class OvertimePage:
                     break
         return one(matches, '시간외근무 신청 바로가기') if matches else False
 
-    def existing(self, row):
+    def existing(self, row,verify_details=False):
         day = date.fromisoformat(row['date'])
         date_pattern = fr'{day.year}\s*[-./년]\s*0?{day.month}\s*[-./월]\s*0?{day.day}(?:\D|$)'
         start = r'18\s*(?::|시)\s*00'
@@ -93,6 +96,7 @@ class OvertimePage:
             for record in table.find_elements(By.XPATH, './/tr[td]'):
                 text = record.text
                 if re.search(date_pattern, text) and re.search(start, text) and re.search(end, text):
+                    if verify_details and ' '.join(row['purpose'].split()) not in ' '.join(text.split()):continue
                     return True
         return False
 
@@ -109,24 +113,22 @@ class OvertimePage:
         inputs = [i for i in visible(form.find_elements(By.CSS_SELECTOR, "input:not([type='hidden']):not([type='submit']):not([type='button'])")) if i != purpose]
         if len(times) != 7 or len(inputs) != 4:
             raise RuntimeError('신청서의 날짜/시간 입력칸 구조를 확인하지 못했습니다.')
-        Select(department).select_by_visible_text('센터')
-        purpose.clear()
-        purpose.send_keys(row['purpose'])
+        select_text(self.driver,department,'센터')
+        set_value(self.driver,purpose,row['purpose'])
         # Main date year; footer year/month/day. Footer equals working date.
         for field, number in zip(inputs, (day.year, day.year, day.month, day.day)):
-            field.clear()
-            field.send_keys(str(number))
+            set_value(self.driver,field,str(number))
         for field, number in zip((times[0], times[1], times[3], times[4], times[5], times[6]),
                                  (day.month, day.day, 18, 0, int(row['end'][:2]), 0)):
-            select_number(field, number)
+            select_number(field, number,self.driver)
         weekday = WEEKDAYS[day.weekday()]
         opts = [o for o in Select(times[2]).options if o.text.strip() in (weekday, weekday + '요일')]
         if len(opts) != 1:
             raise RuntimeError('요일 선택값을 확인하지 못했습니다.')
-        Select(times[2]).select_by_value(opts[0].get_attribute('value'))
-        if purpose.get_attribute('value') != row['purpose']:
+        set_value(self.driver,times[2],opts[0].get_attribute('value'))
+        if input_value(purpose) != row['purpose']:
             raise RuntimeError('근무목적 입력 결과가 일치하지 않습니다.')
-        if [int(i.get_attribute('value')) for i in inputs] != [day.year, day.year, day.month, day.day]:
+        if [int(input_value(i)) for i in inputs] != [day.year, day.year, day.month, day.day]:
             raise RuntimeError('신청 날짜 입력 결과가 일치하지 않습니다.')
         expected = [day.month, day.day, None, 18, 0, int(row['end'][:2]), 0]
         for element, number in zip(times, expected):
@@ -134,19 +136,35 @@ class OvertimePage:
             if number is not None and not re.fullmatch(fr'0*{number}\s*[월일시분]?', text):
                 raise RuntimeError('신청 시간 입력 결과가 일치하지 않습니다.')
         buttons = form.find_elements(By.CSS_SELECTOR, "button, input[type='submit']")
+        self.form=form;self.action=form.get_attribute('action')
         return one([b for b in buttons if label(b).replace(' ', '') == '시간외근무신청'], '시간외근무 신청 버튼')
+
+    def submit(self,button):
+        self.driver._workday_write_submitted=False
+        if self.form.get_attribute('action')!=self.action:raise RuntimeError('시간외근무 신청 대상이 바뀌었습니다.')
+        guard=getattr(self.driver,'_workday_before_write',None)
+        if callable(guard):guard()
+        self.driver._workday_expected_save_url=self.action;self.driver._workday_post_seen=False;self.driver._workday_save_response_status=None;self.alert=''
+        self.driver._workday_write_submitted=True
+        try:
+            accepted=self.driver.execute_script('const b=arguments[0],f=arguments[1];if(b.disabled||b.form!==f||!f.checkValidity())return false;b.click();return true;',button,self.form)
+            if accepted is False:self.driver._workday_write_submitted=False;raise RuntimeError('신청 폼 검증에서 제출이 거절되었습니다.')
+        except UnexpectedAlertPresentException as error:self.alert=str(error.alert_text or '')[:200]
 
     def verify(self, row):
         def found(_):
             try:
-                self.driver.switch_to.alert.accept()
+                alert=self.driver.switch_to.alert;self.alert=str(alert.text)[:200];alert.accept()
             except NoAlertPresentException:
                 pass
+            check=getattr(self.driver,'_workday_check_response',None)
+            if callable(check):check()
             try:
-                return self.existing(row)
+                return self.existing(row,True)
             except StaleElementReferenceException:
                 return False
-        self.wait.until(found)
+        try:self.wait.until(found)
+        except TimeoutException as error:raise RuntimeError(f'{row["date"]}: 신청 저장을 확인하지 못했습니다. 사이트 알림: {getattr(self,"alert","") or "없음"}') from error
 
 
 def submit_rows(page, reviewed, current, statuses, persist):
@@ -180,16 +198,17 @@ def submit_rows(page, reviewed, current, statuses, persist):
             button = page.fill(row)
             statuses[key] = {'status': 'sending', 'purpose': row['purpose'], 'checkout': row['checkout'], 'end': row['end']}
             persist(statuses)
-            button.click()
+            page.submit(button)
             page.verify(row)
             statuses[key]['status'] = 'success'
             persist(statuses)
             results.append(dict(row, status='신청 확인 완료'))
         except Exception as error:
             if statuses.get(key, {}).get('status') == 'sending':
-                statuses[key]['status'] = 'uncertain'
+                sent=getattr(getattr(page,'driver',None),'_workday_write_submitted',True)
+                statuses[key]['status'] = 'not_submitted' if sent is False else 'uncertain'
                 persist(statuses)
-            results.append(dict(row, status=f'확인 필요: {type(error).__name__}'))
+            results.append(dict(row, status=f'확인 필요: {type(error).__name__}: {str(error)[:200]}'))
             # A changed form/ambiguous response must not blindly submit the rest.
             break
     return results

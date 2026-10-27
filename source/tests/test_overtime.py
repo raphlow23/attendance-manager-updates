@@ -12,6 +12,16 @@ import resident
 
 
 class OvertimeTests(unittest.TestCase):
+    def test_open_follows_observed_menu_and_application_links(self):
+        driver=Mock(current_url='https://test.invalid/attendance')
+        work=Mock(text='근무일지',is_displayed=Mock(return_value=True));work.get_attribute.return_value='https://test.invalid/work'
+        entry=Mock(text='시간외근무 신청',is_displayed=Mock(return_value=True));entry.get_attribute.return_value='https://test.invalid/overtime'
+        driver.get.side_effect=lambda url:setattr(driver,'current_url',url)
+        driver.find_elements.side_effect=lambda by,selector:[work] if by==By.LINK_TEXT else [entry] if by==By.CSS_SELECTOR else []
+        driver.find_element.side_effect=lambda *a:Mock(text='시간외근무신청서' if driver.current_url.endswith('/overtime') else '근무일지')
+        overtime.OvertimePage(driver).open()
+        self.assertEqual([call.args[0] for call in driver.get.call_args_list],['https://test.invalid/work','https://test.invalid/overtime'])
+        work.click.assert_not_called();entry.click.assert_not_called()
     def test_scan_succeeds_without_application_menu_and_protects_prior_submissions(self):
         driver=Mock()
         app=Mock(SETTINGS_FILE='settings',STATE_FILE='state',SITE_URL='https://test.invalid')
