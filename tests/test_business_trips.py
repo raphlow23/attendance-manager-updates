@@ -14,25 +14,34 @@ class TripPlanning(unittest.TestCase):
         return trips.make_rows([attendance('2026-10-07'),attendance('2026-10-13'),attendance('2026-10-14')],{'2026-10-07':{'exclude_overtime':True}},[],date(2026,10,27))
     def test_exclusion_is_full_day_but_charged_four_hours(self):
         row=self.rows()[0]
-        self.assertTrue(row['mandatory'] and row['selected'])
+        self.assertTrue(row['event_day']);self.assertFalse(row['mandatory'] or row['selected'])
         self.assertEqual((row['start'],row['end'],row['hours'],row['amount']),('09:00','18:00',4,20000))
     def test_only_completed_attendance_days_are_shown(self):
         rows=[attendance('2026-10-01',':',':'),attendance('2026-10-02',co=':'),attendance('2026-10-03'),attendance('2026-10-30')]
         result=trips.make_rows(rows,{'2026-10-30':{'exclude_overtime':True}},[],date(2026,10,27))
         self.assertEqual([r['date'] for r in result],['2026-10-03'])
     def test_budget_allocation_uses_selected_dates_only(self):
-        rows=self.rows();rows[1]['selected']=True
+        rows=self.rows();rows[0]['selected']=rows[1]['selected']=True
         result,summary=trips.allocate(rows,50000)
         self.assertFalse(result[2]['selected']);self.assertEqual(summary['remaining_amount'],10000)
         self.assertIn('출장 추가 필요',summary['message'])
     def test_two_selected_dates_can_mix_two_and_four_hours(self):
-        rows=self.rows();rows[1]['selected']=rows[2]['selected']=True
+        rows=self.rows();rows[0]['selected']=rows[1]['selected']=rows[2]['selected']=True
         result,summary=trips.allocate(rows,50000)
         self.assertEqual(sorted(r['hours'] for r in result[1:]),[2,4]);self.assertEqual(summary['remaining_amount'],0)
         self.assertFalse(self.rows()[1]['selected'])
-    def test_mandatory_dates_cannot_be_unchecked(self):
-        with self.assertRaisesRegex(ValueError,'필수 포함'):
-            trips.merge_entries(self.rows(),[dict(date='2026-10-07',selected=False)])
+    def test_event_can_be_unchecked_and_its_time_can_be_changed(self):
+        rows=trips.merge_entries(self.rows(),[dict(date='2026-10-07',selected=False,hours=2,start_hour=10)])
+        self.assertFalse(rows[0]['selected']);self.assertEqual((rows[0]['start'],rows[0]['end']),('10:00','12:00'))
+    def test_vacation_is_hidden_and_general_default_is_1300_to_1700(self):
+        rows=trips.make_rows([attendance('2026-10-07'),attendance('2026-10-13')],{'2026-10-07':{'vacation':True,'exclude_overtime':True}},[],date(2026,10,27))
+        self.assertEqual([r['date'] for r in rows],['2026-10-13'])
+        self.assertEqual((rows[0]['start'],rows[0]['end']),('13:00','17:00'))
+    def test_event_changed_end_survives_review_round_trip(self):
+        entry=dict(date='2026-10-07',selected=True,hours=4,start_hour=9,end='13:00')
+        row=trips.merge_entries(self.rows(),[entry])[0]
+        self.assertEqual(row['end'],'13:00')
+        self.assertEqual(trips.merge_entries([row],[dict(row)])[0]['end'],'13:00')
     def test_normal_trip_end_is_derived_and_cannot_exceed_attendance(self):
         row=self.rows()[1]
         self.assertEqual(trips.window(row,2,14)['end'],'16:00')
@@ -60,7 +69,7 @@ class TripJobs(unittest.TestCase):
     setUp=fixtures.StateTests.setUp
     tearDown=fixtures.StateTests.tearDown
     def prepare(self):
-        rows=TripPlanning().rows();rows[1]['selected']=True
+        rows=TripPlanning().rows();rows[0]['selected']=rows[1]['selected']=True
         settings=app.load_json(app.SETTINGS_FILE,{})
         state={'day_rules':{'2026-10-07':{'exclude_overtime':True}}}
         review=dict(id='fixture',month='2026-10',created_at=time.time(),account=trips._account(settings),rules=trips._rules(state,'2026-10'),rows=rows,existing=[],existing_amount=0,existing_verified=True)

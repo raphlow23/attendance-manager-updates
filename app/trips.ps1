@@ -19,11 +19,11 @@ foreach($label in (Get-WorkdayMonthLabels (Get-Date))){[void]$month.Items.Add($l
 $total=New-Object Windows.Forms.NumericUpDown;$total.Location=New-Object Drawing.Point(360,61);$total.Width=145;$total.Maximum=1000;$total.Increment=1;$total.ThousandsSeparator=$true;$form.Controls.Add($total)
 [void](Text-Label '만원 · 예: 20 = 20만원' 515 65 295)
 $scan=Make-Button '출퇴근 일정 조회' 855 55 355
-$note=Text-Label '구분: 센터 / 이동: 대중교통 · 연장 제외일: 09~18시, 인정 4시간·2만원 · 기존 등록은 선택 완료 시 확인·중복 제외' 20 110 1190
+$note=Text-Label '구분: 센터 / 이동: 대중교통 · 행사 기본 09~18시 / 일반 기본 13~17시 · 휴가 숨김 · 기존 등록은 선택 완료 시 확인·중복 제외' 20 110 1190
 $grid=New-Object Windows.Forms.DataGridView;$grid.Location=New-Object Drawing.Point(20,155);$grid.Size=New-Object Drawing.Size(1190,370);$grid.Anchor='Top,Bottom,Left,Right'
 $grid.AllowUserToAddRows=$false;$grid.AllowUserToDeleteRows=$false;$grid.RowHeadersVisible=$false;$grid.AutoSizeColumnsMode='Fill';$grid.RowTemplate.Height=32
 $check=New-Object Windows.Forms.DataGridViewCheckBoxColumn;$check.Name='selected';$check.HeaderText='선택';$check.FillWeight=40;[void]$grid.Columns.Add($check)
-foreach($spec in @(@('date','날짜',100),@('weekday','요일',45),@('attendance','출퇴근',115),@('required','필수',80))){$c=New-Object Windows.Forms.DataGridViewTextBoxColumn;$c.Name=$spec[0];$c.HeaderText=$spec[1];$c.FillWeight=$spec[2];$c.ReadOnly=$true;[void]$grid.Columns.Add($c)}
+foreach($spec in @(@('date','날짜',100),@('weekday','요일',45),@('attendance','출퇴근',115),@('required','구분',145))){$c=New-Object Windows.Forms.DataGridViewTextBoxColumn;$c.Name=$spec[0];$c.HeaderText=$spec[1];$c.FillWeight=$spec[2];$c.ReadOnly=$true;[void]$grid.Columns.Add($c)}
 foreach($spec in @(@('hours','인정시간',70),@('start_hour','출발 시',70))){$c=New-Object Windows.Forms.DataGridViewComboBoxColumn;$c.Name=$spec[0];$c.HeaderText=$spec[1];$c.FillWeight=$spec[2];$c.FlatStyle='Flat';$items=if($spec[0] -eq 'hours'){@('2','4')}else{@(0..23|ForEach-Object{[string]$_})};foreach($item in $items){[void]$c.Items.Add($item)};[void]$grid.Columns.Add($c)}
 foreach($spec in @(@('end','자동 복귀',85),@('amount','금액',90),@('location','출장 장소 (직접 입력)',180),@('purpose','출장 목적 (직접 입력)',300),@('status','상태',200))){$c=New-Object Windows.Forms.DataGridViewTextBoxColumn;$c.Name=$spec[0];$c.HeaderText=$spec[1];$c.FillWeight=$spec[2];$c.ReadOnly=($spec[0] -notin @('location','purpose'));[void]$grid.Columns.Add($c)}
 $grid.Columns['location'].Visible=$false;$grid.Columns['purpose'].Visible=$false;$form.Controls.Add($grid)
@@ -44,12 +44,12 @@ function Update-Totals {
   $sum=0;$count=0;$valid=$true;$details=$true;$missing=$false
   foreach($row in $grid.Rows){
    $entry=$row.Tag;$hours=[int]$row.Cells['hours'].Value;$hour=[int]$row.Cells['start_hour'].Value
-   if($entry.blocked -and $entry.existing_amount){$hours=[int]$entry.existing_hours;$hour=[int]$entry.start_hour;$end=$entry.end}elseif($entry.mandatory){$hours=4;$hour=9;$end='18:00'}else{$end=('{0:D2}:00' -f ($hour+$hours))}
+   if($entry.blocked -and $entry.existing_amount){$hours=[int]$entry.existing_hours;$hour=[int]$entry.start_hour;$end=$entry.end}elseif($entry.event_day -and $hours -eq 4 -and $hour -eq 9 -and $entry.end -eq '18:00'){$end='18:00'}else{$end=('{0:D2}:00' -f ($hour+$hours))}
    $row.Cells['end'].Value=$end;$row.Cells['amount'].Value=$hours*5000
-   if($entry.conflict -or ($entry.mandatory -and $entry.blocked -and -not $entry.existing_amount)){$missing=$true}
+   if($entry.conflict){$missing=$true}
    if($row.Cells['selected'].Value){
     $count++;$sum+=$hours*5000
-    if($entry.blocked -or (-not $entry.mandatory -and ($hour*60 -lt (Clock-Minutes $entry.checkin) -or ($hour+$hours)*60 -gt (Clock-Minutes $entry.checkout)))){$valid=$false}
+    if($entry.blocked -or ($hour*60 -lt (Clock-Minutes $entry.checkin) -or (Clock-Minutes $end) -gt (Clock-Minutes $entry.checkout))){$valid=$false}
     if([string]::IsNullOrWhiteSpace([string]$row.Cells['location'].Value) -or [string]::IsNullOrWhiteSpace([string]$row.Cells['purpose'].Value)){$details=$false}
    }
    $entry.selected=[bool]$row.Cells['selected'].Value;$entry.hours=$hours;$entry.start_hour=$hour;$entry.start=('{0:D2}:00' -f $hour);$entry.end=$end;$entry.amount=$hours*5000
@@ -57,7 +57,7 @@ function Update-Totals {
   }
   $left=(Target-Amount)-$script:existing-$sum
   $result=if($left -gt 0){"출장 추가 필요: $($left/5000)시간 / $($left.ToString('N0'))원 부족"}elseif($left -lt 0){"목표 초과: $((-$left).ToString('N0'))원 · 선택을 줄이세요."}else{'목표 금액·인정시간 일치'}
-  if($missing){$result+=' · 필수 제외일의 근태/기존 출장 확인 필요'}
+  if($missing){$result+=' · 기존 출장 확인 필요'}
   if(-not $valid){$result+=' · 출발·복귀를 출퇴근 구간 안으로 조정하세요.'}
   $summary.Text="목표 $($total.Value.ToString('N0'))만원 / $((Target-Amount)/5000)시간 · 기존 $($script:existing.ToString('N0'))원 · 선택 $count 일 / $($sum.ToString('N0'))원`r`n$result"
   $summary.ForeColor=if($left -eq 0 -and $valid -and -not $missing){[Drawing.Color]::DarkGreen}else{[Drawing.Color]::Firebrick}
@@ -71,10 +71,9 @@ function Render-Rows($rows){
  try{
   $grid.Rows.Clear()
   foreach($entry in $rows){
-   $index=$grid.Rows.Add([bool]$entry.selected,$entry.date,$entry.weekday,($entry.checkin+'~'+$entry.checkout),$(if($entry.mandatory){'제외일'}else{''}),[string][int]$entry.hours,[string][int]$entry.start_hour,$entry.end,[int]$entry.amount,$entry.location,$entry.purpose,$entry.status)
+   $index=$grid.Rows.Add([bool]$entry.selected,$entry.date,$entry.weekday,($entry.checkin+'~'+$entry.checkout),$(if($entry.event_day){'연장근무 제외(행사)'}else{''}),[string][int]$entry.hours,[string][int]$entry.start_hour,$entry.end,[int]$entry.amount,$entry.location,$entry.purpose,$entry.status)
    $row=$grid.Rows[$index];$row.Tag=$entry
    foreach($name in @('selected','hours','start_hour','location','purpose')){$row.Cells[$name].ReadOnly=[bool]$entry.blocked}
-   if($entry.mandatory){foreach($name in @('selected','hours','start_hour')){$row.Cells[$name].ReadOnly=$true}}
    if($script:stage -eq 2){$row.Cells['selected'].ReadOnly=$true;$row.Cells['hours'].ReadOnly=$true}
   }
  }finally{$script:loading=$false;Update-Totals}
@@ -87,7 +86,7 @@ function Change-Stage($stage){
  $status.Text=if($details){'선택한 날짜의 출장 장소와 목적을 직접 입력하세요. 날짜·인정시간 변경은 일정 다시 선택을 누르세요.'}else{'금액이 차면 추가 체크를 막습니다. 선택을 해제하거나 시간을 줄이면 다시 선택할 수 있습니다.'}
  if($details){Render-Rows @($script:allRows|Where-Object{$_.selected})}else{Render-Rows $script:allRows}
 }
-function Entries{@($grid.Rows|ForEach-Object{@{date=[string]$_.Cells['date'].Value;selected=[bool]$_.Cells['selected'].Value;hours=[int]$_.Cells['hours'].Value;start_hour=[int]$_.Cells['start_hour'].Value;location=[string]$_.Cells['location'].Value;purpose=[string]$_.Cells['purpose'].Value}})}
+function Entries{@($grid.Rows|ForEach-Object{@{date=[string]$_.Cells['date'].Value;selected=[bool]$_.Cells['selected'].Value;hours=[int]$_.Cells['hours'].Value;start_hour=[int]$_.Cells['start_hour'].Value;end=[string]$_.Cells['end'].Value;location=[string]$_.Cells['location'].Value;purpose=[string]$_.Cells['purpose'].Value}})}
 function Start-TripJob($job){
  $python=Join-Path $PSScriptRoot 'runtime/python.exe';if(-not(Test-Path -LiteralPath $python)){throw '설치된 프로그램에서 실행하세요.'}
  $root=Join-Path $PSScriptRoot 'dist';New-Item -ItemType Directory -Path $root -Force|Out-Null
@@ -145,8 +144,9 @@ $form.Add_FormClosing({if($script:worker){$_.Cancel=$true;$status.Text='진행 �
 . (Join-Path $PSScriptRoot 'theme.ps1');Set-UiTheme $form;$submit.BackColor=$script:UiOrange
 Update-Totals
 if($SelfTest){
- $fixture='[{"date":"2026-10-07","weekday":"수","checkin":"09:00","checkout":"18:00","mandatory":true,"selected":true,"blocked":false,"hours":4,"start_hour":9,"start":"09:00","end":"18:00","amount":20000,"existing_amount":0,"location":"","purpose":"","status":"필수 포함"},{"date":"2026-10-13","weekday":"화","checkin":"08:35","checkout":"18:00","mandatory":false,"selected":false,"blocked":false,"hours":4,"start_hour":9,"start":"09:00","end":"13:00","amount":20000,"existing_amount":0,"location":"","purpose":"","status":"선택 가능"},{"date":"2026-10-14","weekday":"수","checkin":"08:30","checkout":"18:00","mandatory":false,"selected":false,"blocked":false,"hours":4,"start_hour":9,"start":"09:00","end":"13:00","amount":20000,"existing_amount":0,"location":"","purpose":"","status":"선택 가능"}]'|ConvertFrom-Json
+ $fixture='[{"date":"2026-10-07","weekday":"수","checkin":"09:00","checkout":"18:00","mandatory":false,"event_day":true,"selected":true,"blocked":false,"hours":4,"start_hour":9,"start":"09:00","end":"18:00","amount":20000,"existing_amount":0,"location":"","purpose":"","status":"선택 가능"},{"date":"2026-10-13","weekday":"화","checkin":"08:35","checkout":"18:00","mandatory":false,"selected":false,"blocked":false,"hours":4,"start_hour":13,"start":"13:00","end":"17:00","amount":20000,"existing_amount":0,"location":"","purpose":"","status":"선택 가능"},{"date":"2026-10-14","weekday":"수","checkin":"08:30","checkout":"18:00","mandatory":false,"selected":false,"blocked":false,"hours":4,"start_hour":13,"start":"13:00","end":"17:00","amount":20000,"existing_amount":0,"location":"","purpose":"","status":"선택 가능"}]'|ConvertFrom-Json
  $script:reviewId='fixture';$script:allRows=@($fixture);$total.Value=20;if((Target-Amount) -ne 200000){throw '만원 입력 변환 실패'};$total.Value=3;Render-Rows $script:allRows
+ if($grid.Rows[0].Cells['selected'].ReadOnly -or $grid.Rows[0].Cells['start_hour'].ReadOnly -or $grid.Rows[0].Cells['required'].Value -ne '연장근무 제외(행사)'){throw '행사 선택/시간 수정 검사 실패'}
  $grid.Rows[1].Cells['selected'].Value=$true
  if($grid.Rows[1].Cells['hours'].Value -ne '2' -or -not $complete.Enabled){throw '남은 1만원의 2시간 자동 배분 실패'}
  $grid.Rows[2].Cells['selected'].Value=$true
@@ -162,7 +162,7 @@ if($SelfTest){
  Update-Totals;if(-not $submit.Enabled){throw '출장 장소·목적 입력 완료 검사 실패'}
  Change-Stage 1;if($grid.Rows.Count -ne 3){throw '전체 일정 복귀 실패'}
  if($PreviewPath){Change-Stage 2;$script:loading=$true;$form.Controls.Remove($allocate);$form.Controls.Remove($complete);$grid.Columns.Remove('attendance');Write-UiPreview $form $PreviewPath}
- Write-Output 'TRIPS_UI_OK: budget limit, 2h fit, selected-only detail stage, mandatory dates and manual details';$form.Dispose();$timer.Dispose();return
+ Write-Output 'TRIPS_UI_OK: budget limit, 2h fit, selected-only detail stage, optional event dates, editable times and manual details';$form.Dispose();$timer.Dispose();return
 }
 if(-not(Enter-WorkdayUi 'trips')){$form.Dispose();$timer.Dispose();return}
 try { Show-WorkdayDialog $form $OwnerHandle } finally { Exit-WorkdayUi;$timer.Dispose() }

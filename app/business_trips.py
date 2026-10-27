@@ -26,17 +26,16 @@ def minutes(value):
 
 
 def window(row,hours=None,start_hour=None):
-    if row['mandatory']:
-        return dict(hours=4,start_hour=9,start='09:00',end='18:00',amount=20000)
     hours=row.get('hours',4) if hours is None else hours
     if type(hours) is not int or hours not in (2,4):raise ValueError('출장 인정시간은 2시간 또는 4시간입니다.')
     ci=minutes(row['checkin']);co=minutes(row['checkout'])
-    start_hour=(ci+59)//60 if start_hour is None else start_hour
-    if type(start_hour) is not int or not 0<=start_hour<=23 or start_hour+hours>23:
+    start_hour=(9 if row.get('event_day') else 13) if start_hour is None else start_hour
+    end_hour=18 if row.get('event_day') and start_hour==9 and hours==4 and row.get('end','18:00')=='18:00' else start_hour+hours
+    if type(start_hour) is not int or not 0<=start_hour<=23 or end_hour>23:
         raise ValueError('출발 시각과 복귀 시각을 확인하세요.')
-    if ci is None or co is None or start_hour*60<ci or (start_hour+hours)*60>co:
+    if ci is None or co is None or start_hour*60<ci or end_hour*60>co:
         raise ValueError(f'{row["date"]}: 출퇴근 시간 안에서 출발 시각을 선택하세요.')
-    return dict(hours=hours,start_hour=start_hour,start=f'{start_hour:02}:00',end=f'{start_hour+hours:02}:00',amount=hours*RATE)
+    return dict(hours=hours,start_hour=start_hour,start=f'{start_hour:02}:00',end=f'{end_hour:02}:00',amount=hours*RATE)
 
 
 def existing_totals(records):
@@ -65,17 +64,16 @@ def make_rows(attendance,rules,existing,today):
     for key in sorted(keys):
         record=by_date.get(key,{})
         rule=rules.get(key,{})
-        mandatory=bool(rule.get('exclude_overtime') and not rule.get('vacation'))
+        if rule.get('vacation'):continue
+        event_day=bool(rule.get('exclude_overtime'))
         ci=minutes(record.get('checkin',''));co=minutes(record.get('checkout',''))
         valid=ci is not None and co is not None and ci<co and date.fromisoformat(key)<=today
         if not valid:continue
         registered=totals.get(key)
         row=dict(date=key,weekday='월화수목금토일'[date.fromisoformat(key).weekday()],checkin=record.get('checkin',''),checkout=record.get('checkout',''),
-                 mandatory=mandatory,selected=mandatory and valid and not registered,blocked=not valid or bool(registered) or bool(rule.get('vacation')),
+                 mandatory=False,event_day=event_day,selected=False,blocked=not valid or bool(registered),
                  location='',purpose='',existing_hours=registered['hours'] if registered else 0,existing_amount=registered['amount'] if registered else 0)
-        row['status']='등록 완료 · 중복 제외' if registered else '출퇴근 기록 확인 필요' if not valid else '휴가 · 기본 제외' if rule.get('vacation') else '필수 포함' if mandatory else '선택 가능'
-        if mandatory and registered and not any(r['start']=='09:00' and r['end']=='18:00' for r in registered['records']):
-            row['status']='기존 출장 확인 필요 · 제외일 09~18시와 다름';row['conflict']=True
+        row['status']='등록 완료 · 중복 제외' if registered else '선택 가능'
         try:row.update(window(row,4))
         except (ValueError,TypeError):
             try:row.update(window(row,2))
@@ -101,8 +99,8 @@ def allocate(rows,total,existing_amount=0,preferred_hours=4):
     money(total)
     if preferred_hours not in (2,4):raise ValueError('기본 출장 시간을 선택하세요.')
     result=deepcopy(rows)
-    remaining=total-existing_amount-sum(r['amount'] for r in result if r['selected'] and r['mandatory'] and not r['blocked'])
-    candidates=[r for r in result if r.get('selected') and not r['mandatory'] and not r['blocked']]
+    remaining=total-existing_amount
+    candidates=[r for r in result if r.get('selected') and not r['blocked']]
     states={0:[]}
     for row in candidates:
         choices=[]
@@ -128,14 +126,14 @@ def merge_entries(rows,entries,require_details=False):
         if key not in allowed or key in seen:raise ValueError('조회 목록에 없거나 중복된 날짜입니다.')
         seen.add(key);row=allowed[key]
         selected=bool(entry.get('selected'))
-        if row['mandatory'] and not row['blocked'] and not selected:raise ValueError(f'{key}: 연장 제외일은 필수 포함입니다.')
         if row['blocked'] and selected:raise ValueError(f'{key}: {row["status"]}')
         row.update(selected=selected,location=str(entry.get('location','')).strip(),purpose=str(entry.get('purpose','')).strip())
-        if not row['blocked']:row.update(window(row,entry.get('hours',row['hours']),entry.get('start_hour',row['start_hour'])))
+        if not row['blocked']:
+            changed=window(dict(row,end=entry.get('end',row.get('end'))),entry.get('hours',row['hours']),entry.get('start_hour',row['start_hour']))
+            if entry.get('end') and entry['end']!=changed['end']:raise ValueError('출장 복귀 시간이 인정시간과 일치하지 않습니다.')
+            row.update(changed)
         if selected and require_details and (not row['location'] or not row['purpose']):raise ValueError(f'{key}: 출장 장소와 목적을 직접 입력하세요.')
         if len(row['location'])>500 or len(row['purpose'])>1000:raise ValueError('출장 장소 또는 목적이 너무 깁니다.')
-    if require_details and any(r['mandatory'] and not r['existing_amount'] and (r['blocked'] or r['date'] not in seen or not r['selected']) for r in result):
-        raise ValueError('연장 제외일의 출퇴근 기록과 출장 선택을 먼저 확인하세요.')
     return result
 
 

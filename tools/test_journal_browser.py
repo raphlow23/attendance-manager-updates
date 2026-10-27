@@ -88,7 +88,7 @@ try:
    with patch.object(WebElement,'click',lambda self:None),patch.object(WebElement,'send_keys',lambda self,*args:None),patch.object(WebElement,'get_attribute',initial_value),patch('monthly_reconcile._connect',side_effect=connect),patch('monthly_reconcile._read_month',return_value=attendance):
     review=trips.run_job(app,dict(operation='scan',month='2026-10',total=30000))
     chosen=[]
-    for row in review['rows']:chosen.append(dict(date=row['date'],selected=True,hours=4 if row['mandatory'] else 2,start_hour=9,location='장소 '+row['date'],purpose='직접  입력한 출장 목적'))
+    for row in review['rows']:chosen.append(dict(date=row['date'],selected=True,hours=4 if row.get('event_day') else 2,start_hour=9,location='장소 '+row['date'],purpose='직접  입력한 출장 목적'))
     review=trips.run_job(app,dict(operation='inspect',review_id=review['review_id'],total=30000,rows=chosen))
     assert review['ready']
     result=trips.run_job(app,dict(operation='submit',review_id=review['review_id'],total=30000,rows=chosen))
