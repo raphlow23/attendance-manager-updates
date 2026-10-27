@@ -105,7 +105,7 @@ class TripPage:
         purpose=one([i for i in texts if '출장목적' in (i.get_attribute('placeholder') or '')],'출장목적 입력칸')
         dates=[i for i in texts if i not in (place,purpose)]
         if len(selects)!=6 or len(dates)!=3:raise RuntimeError('출장 등록 날짜·시간 입력칸 구조가 제공된 화면과 다릅니다. HTML 확인이 필요합니다.')
-        submit=one([b for b in form.find_elements(By.CSS_SELECTOR,'button, input') if label(b) in ('확인','출장등록','출장 등록')],'출장 확인 버튼')
+        submit=one([b for b in form.find_elements(By.CSS_SELECTOR,'button, input') if label(b) in ('확인','출장등록','출장 등록','수정','수정하기','출장 수정','출장 수정하기','수정완료')],'출장 확인 버튼')
         return form,selects,dates,place,purpose,submit
     def check_options(self):
         _,selects,_,_,_,_=self.fields()
@@ -124,7 +124,7 @@ class TripPage:
         control=one([c for c in form.find_elements(By.CSS_SELECTOR,'button, input') if label(c) in ('조회','확인')],'출장 월 조회 버튼')
         self.driver.execute_script('arguments[0].click()',control)
         self.wait.until(lambda _:re.search(fr'(?<!\d){first.month}\s*월\s*출장일지',self.driver.find_element(By.TAG_NAME,'body').text))
-    def existing(self,month):
+    def existing(self,month,include_elements=False):
         self.month(month);result=[];tables=0
         for table in visible(self.driver.find_elements(By.TAG_NAME,'table')):
             heads=[norm(e.text) for e in table.find_elements(By.XPATH,'.//tr[th][1]/th')]
@@ -147,18 +147,34 @@ class TripPage:
                     if hour>23 or minute>59:raise RuntimeError('기존 출장 시각이 유효한 시간 범위를 벗어났습니다.')
                     times.append(f'{hour:02}:{minute:02}')
                 result.append(dict(date=str(day),category=cells[0].text.strip(),location=cells[2].text.strip(),purpose=cells[3].text.strip(),transport=cells[4].text.strip(),start=times[0],end=times[1]))
+                if include_elements:result[-1]['element']=row
         if tables!=1:raise RuntimeError('출장 내역 표를 하나로 확인하지 못했습니다. 중복 확인 전에는 등록하지 않습니다.')
         return result
-    def submit(self,row,month):
+    def submit(self,row,month,update=False):
         self.driver._workday_write_submitted=False
+        if update:
+            matches=[r for r in self.existing(month,True) if r['date']==row['date']]
+            record=one([r['element'] for r in matches],'수정할 기존 출장')
+            original=matches[0]
+            controls=visible(record.find_elements(By.CSS_SELECTOR,"a, button, input[type='button'], input[type='submit']"))
+            edit=one([c for c in controls if norm(label(c)) in ('수정','수정하기','출장수정','출장수정하기')],'기존 출장 수정 버튼')
+            self.activate(edit)
+            self.wait.until(lambda _:self.form())
         form,selects,dates,place,purpose,button=self.fields()
         action=form.get_attribute('action');source=urlsplit(self.driver.current_url);target=urlsplit(action)
         if (source.scheme,source.netloc)!=(target.scheme,target.netloc):raise RuntimeError('출장 저장 사이트가 다릅니다.')
-        select_text(self.driver,selects[0],CATEGORY);select_text(self.driver,selects[1],TRANSPORT)
         day=date.fromisoformat(row['date'])
-        for element,value in zip(dates,(day.year,day.month,day.day)):set_value(self.driver,element,value)
+        if update:
+            if any(' '.join(input_value(field).split())!=' '.join(original[key].split()) for field,key in ((place,'location'),(purpose,'purpose'))):raise RuntimeError('수정 화면의 기존 장소·목적이 선택 내역과 다릅니다. 저장하지 않았습니다.')
+            if [int(input_value(f)) for f in dates]!=[day.year,day.month,day.day]:raise RuntimeError('수정 화면 출장 날짜가 다릅니다.')
+            if Select(selects[0]).first_selected_option.text.strip()!=CATEGORY or Select(selects[1]).first_selected_option.text.strip()!=TRANSPORT:raise RuntimeError('기존 출장 구분·이동수단을 확인하세요.')
+            for field,value in zip(selects[2:],(int(row['start'][:2]),int(row['start'][3:]),int(row['end'][:2]),int(row['end'][3:]))):
+                if not re.fullmatch(fr'0*{value}\s*[시분]?',Select(field).first_selected_option.text.strip()):raise RuntimeError('수정 화면 출장 시간이 다릅니다.')
+        else:
+            select_text(self.driver,selects[0],CATEGORY);select_text(self.driver,selects[1],TRANSPORT)
+            for element,value in zip(dates,(day.year,day.month,day.day)):set_value(self.driver,element,value)
+            for element,value in zip(selects[2:],(int(row['start'][:2]),0,int(row['end'][:2]),0)):select_number(self.driver,element,value)
         set_value(self.driver,place,row['location']);set_value(self.driver,purpose,row['purpose'])
-        for element,value in zip(selects[2:],(int(row['start'][:2]),0,int(row['end'][:2]),0)):select_number(self.driver,element,value)
         if form.get_attribute('action')!=action:raise RuntimeError('출장 저장 대상이 바뀌었습니다.')
         guard=getattr(self.driver,'_workday_before_write',None)
         if callable(guard):guard()

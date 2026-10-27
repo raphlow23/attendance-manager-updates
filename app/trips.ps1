@@ -31,28 +31,29 @@ $summary=Text-Label '목표 금액을 입력하고 출퇴근 일정을 조회하
 $status=Text-Label '설정을 저장하거나 메뉴를 여는 것만으로 사이트에 접속하지 않습니다.' 20 650 1190;$status.Height=45;$status.Anchor='Bottom,Left,Right'
 $allocate=Make-Button '선택일 시간 배분' 20 600 230;$allocate.Anchor='Bottom,Left'
 $complete=Make-Button '선택 완료 → 기존 출장 확인' 270 600 330;$complete.Anchor='Bottom,Left'
+$loadExisting=Make-Button '기존 출장 불러오기·수정' 615 600 225;$loadExisting.Anchor='Bottom,Left'
 $back=Make-Button '일정 다시 선택' 20 600 230;$back.Anchor='Bottom,Left';$back.Visible=$false
-$submit=Make-Button '선택 날짜 순서대로 등록' 855 600 355;$submit.Anchor='Bottom,Right';$submit.Visible=$false
+$submit=Make-Button '선택 날짜 등록·수정' 855 600 355;$submit.Anchor='Bottom,Right';$submit.Visible=$false
 $timer=New-Object Windows.Forms.Timer;$timer.Interval=400
 function Selected-Month{[DateTime]::ParseExact([string]$month.SelectedItem,'yyyy년 MM월',[Globalization.CultureInfo]::InvariantCulture).ToString('yyyy-MM')}
 function Clock-Minutes($value){$text=([string]$value)-replace '\s','';if($text -match '^(\d{1,2}):(\d{1,2})$'){return [int]$Matches[1]*60+[int]$Matches[2]};return -1}
 function Target-Amount{return [int]$total.Value*10000}
-function Row-Amount($row){return [int]$row.Cells['hours'].Value*5000}
+function Row-Amount($row){if($row.Tag.is_existing){return 0};return [int]$row.Cells['hours'].Value*5000}
 function Update-Totals {
  if($script:loading){return};$script:loading=$true
  try{
-  $sum=0;$count=0;$valid=$true;$details=$true;$missing=$false;$skipped=0
+  $sum=0;$count=0;$valid=$true;$details=$true;$missing=$false;$skipped=0;$hasNew=$false
   foreach($row in $grid.Rows){
    $entry=$row.Tag;$hours=[int]$row.Cells['hours'].Value;$hour=[int]$row.Cells['start_hour'].Value
-   if($entry.blocked -and $entry.existing_amount){$hours=[int]$entry.existing_hours;$hour=[int]$entry.start_hour;$end=$entry.end}elseif($entry.event_day -and $hours -eq 4 -and $hour -eq 9 -and $entry.end -eq '18:00'){$end='18:00'}else{$end=('{0:D2}:00' -f ($hour+$hours))}
+   if($entry.existing_amount){$hours=[int]$entry.existing_hours;$hour=[int]$entry.start_hour;$end=$entry.end}elseif($entry.event_day -and $hours -eq 4 -and $hour -eq 9 -and $entry.end -eq '18:00'){$end='18:00'}else{$end=('{0:D2}:00' -f ($hour+$hours))}
    $row.Cells['end'].Value=$end;$row.Cells['amount'].Value=$hours*5000
    if($entry.conflict){$missing=$true}
    $blankPurpose=[string]::IsNullOrWhiteSpace([string]$row.Cells['purpose'].Value)
    $include=[bool]$row.Cells['selected'].Value -and ($script:stage -ne 2 -or -not $blankPurpose)
-   if($script:stage -eq 2){if(-not $row.Cells['selected'].Value){$skipped++;$row.Cells['status'].Value='체크 해제 · 등록 제외'}elseif($blankPurpose){$skipped++;$row.Cells['status'].Value='목적 미입력 · 등록 제외'}else{$row.Cells['status'].Value='등록 대상'}}
+   if($script:stage -eq 2){if(-not $row.Cells['selected'].Value){$skipped++;$row.Cells['status'].Value='체크 해제 · 등록 제외'}elseif($blankPurpose){$skipped++;$row.Cells['status'].Value='목적 미입력 · 등록 제외'}else{$row.Cells['status'].Value=$(if($entry.is_existing){'기존 출장 수정 대상'}else{'신규 등록 대상'})}}
    if($include){
-    $count++;$sum+=$hours*5000
-    if($entry.blocked -or ($hour*60 -lt (Clock-Minutes $entry.checkin) -or (Clock-Minutes $end) -gt (Clock-Minutes $entry.checkout))){$valid=$false}
+    $count++;if(-not $entry.is_existing){$sum+=$hours*5000;$hasNew=$true}
+    if($entry.blocked -or (-not $entry.is_existing -and ($hour*60 -lt (Clock-Minutes $entry.checkin) -or (Clock-Minutes $end) -gt (Clock-Minutes $entry.checkout)))){$valid=$false}
     if([string]::IsNullOrWhiteSpace([string]$row.Cells['location'].Value) -or [string]::IsNullOrWhiteSpace([string]$row.Cells['purpose'].Value)){$details=$false}
    }
    $entry.selected=[bool]$row.Cells['selected'].Value;$entry.hours=$hours;$entry.start_hour=$hour;$entry.start=('{0:D2}:00' -f $hour);$entry.end=$end;$entry.amount=$hours*5000
@@ -65,8 +66,9 @@ function Update-Totals {
   if(-not $valid){$result+=' · 출발·복귀를 출퇴근 구간 안으로 조정하세요.'}
   $summary.Text="목표 $($total.Value.ToString('N0'))만원 / $((Target-Amount)/5000)시간 · 기존 $($script:existing.ToString('N0'))원 · 선택 $count 일 / $($sum.ToString('N0'))원`r`n$result"
   $summary.ForeColor=if($left -eq 0 -and $valid -and -not $missing){[Drawing.Color]::DarkGreen}else{[Drawing.Color]::Firebrick}
-  $ready=([bool]$script:reviewId -and $left -eq 0 -and $count -gt 0 -and $valid -and -not $missing -and -not $script:worker)
-  $complete.Enabled=($ready -and $script:stage -eq 1);$submit.Enabled=([bool]$script:reviewId -and $left -ge 0 -and $count -gt 0 -and $valid -and $details -and -not $missing -and -not $script:worker -and $script:stage -eq 2)
+  $ready=([bool]$script:reviewId -and ($left -eq 0 -or -not $hasNew) -and $count -gt 0 -and $valid -and -not $missing -and -not $script:worker)
+  $complete.Enabled=($ready -and $script:stage -eq 1);$submit.Enabled=([bool]$script:reviewId -and ($left -ge 0 -or -not $hasNew) -and $count -gt 0 -and $valid -and $details -and -not $missing -and -not $script:worker -and $script:stage -eq 2)
+  $loadExisting.Enabled=([bool]$script:reviewId -and -not $script:worker)
   $allocate.Enabled=([bool]$script:reviewId -and $count -gt 0 -and -not $script:worker)
  }finally{$script:loading=$false}
 }
@@ -78,6 +80,7 @@ function Render-Rows($rows){
    $index=$grid.Rows.Add([bool]$entry.selected,$entry.date,$entry.weekday,($entry.checkin+'~'+$entry.checkout),$(if($entry.event_day){'연장근무 제외(행사)'}else{''}),[string][int]$entry.hours,[string][int]$entry.start_hour,$entry.end,[int]$entry.amount,$entry.location,$entry.purpose,$entry.status)
    $row=$grid.Rows[$index];$row.Tag=$entry
    foreach($name in @('selected','hours','start_hour','location','purpose')){$row.Cells[$name].ReadOnly=[bool]$entry.blocked}
+   if($entry.is_existing){$row.Cells['hours'].ReadOnly=$true;$row.Cells['start_hour'].ReadOnly=$true}
    if($script:stage -eq 2){$row.Cells['hours'].ReadOnly=$true}
   }
  }finally{$script:loading=$false;Update-Totals}
@@ -85,8 +88,8 @@ function Render-Rows($rows){
 function Change-Stage($stage){
  $script:stage=$stage;$details=($stage -eq 2)
  $grid.Columns['location'].Visible=$details;$grid.Columns['purpose'].Visible=$details;$grid.Columns['attendance'].Visible=-not $details
- $complete.Visible=-not $details;$allocate.Visible=-not $details;$back.Visible=$details;$submit.Visible=$details;$total.Enabled=-not $details;$month.Enabled=-not $details
- $heading.Text=if($details){'2. 선택한 날짜의 출장 장소·목적을 입력하고 날짜별로 등록하세요.'}else{'1. 날짜·시간 선택 → 2. 선택한 날짜의 출장 장소·목적 입력 → 날짜별 등록'}
+ $complete.Visible=-not $details;$allocate.Visible=-not $details;$back.Visible=$details;$submit.Visible=$details;$loadExisting.Visible=-not $details;$total.Enabled=-not $details;$month.Enabled=-not $details
+ $heading.Text=if($details){'2. 장소·목적 입력 — 기존 출장은 수정하고, 신규 날짜는 추가 등록합니다.'}else{'1. 날짜·시간 선택 → 2. 선택한 날짜의 출장 장소·목적 입력 → 날짜별 등록'}
  $status.Text=if($details){'체크 해제 또는 목적 미입력 날짜는 등록에서 제외합니다. 장소와 목적을 입력한 날짜만 확인 후 등록합니다.'}else{'금액이 차면 추가 체크를 막습니다. 선택을 해제하거나 시간을 줄이면 다시 선택할 수 있습니다.'}
  if($details){Render-Rows @($script:allRows|Where-Object{$_.selected})}else{Render-Rows $script:allRows}
 }
@@ -102,6 +105,7 @@ function Start-TripJob($job){
 }
 $scan.Add_Click({try{$script:reviewId=$null;Start-TripJob @{operation='scan';month=(Selected-Month);total=(Target-Amount)}}catch{$status.Text=$_.Exception.Message}})
 $allocate.Add_Click({try{[void]$grid.EndEdit();Start-TripJob @{operation='allocate';review_id=$script:reviewId;total=(Target-Amount);rows=@(Entries)}}catch{$status.Text=$_.Exception.Message}})
+$loadExisting.Add_Click({try{[void]$grid.EndEdit();Start-TripJob @{operation='inspect';review_id=$script:reviewId;total=(Target-Amount);rows=@(Entries);edit_existing=$true}}catch{$status.Text=$_.Exception.Message}})
 $complete.Add_Click({try{[void]$grid.EndEdit();Update-Totals;if($complete.Enabled){Start-TripJob @{operation='inspect';review_id=$script:reviewId;total=(Target-Amount);rows=@(Entries)}}}catch{$status.Text=$_.Exception.Message}})
 $back.Add_Click({[void]$grid.EndEdit();Update-Totals;Change-Stage 1})
 $submit.Add_Click({try{
@@ -111,9 +115,9 @@ $submit.Add_Click({try{
   $included=@($entries|Where-Object{$_.selected -and -not [string]::IsNullOrWhiteSpace($_.purpose)})
   $excluded=@($entries|Where-Object{-not $_.selected -or [string]::IsNullOrWhiteSpace($_.purpose)})
   $excludedLines=@($excluded|ForEach-Object{('{0}: {1}' -f $_.date,$(if(-not $_.selected){'체크 해제'}else{'목적 미입력'}))})
-  $text="등록 대상 $($included.Count)건: $((@($included|ForEach-Object{$_.date})) -join ', ')`r`n제외 $($excluded.Count)건"
+  $text="등록·수정 대상 $($included.Count)건: $((@($included|ForEach-Object{$_.date})) -join ', ')`r`n제외 $($excluded.Count)건"
   if($excludedLines.Count){$text+="`r`n"+($excludedLines -join "`r`n")}
-  $text+="`r`n`r`n$($summary.Text)`r`n`r`n제외한 날짜는 등록하지 않습니다. 위 등록 대상만 진행할까요?"
+  $text+="`r`n`r`n$($summary.Text)`r`n`r`n제외한 날짜는 처리하지 않습니다. 기존 출장은 장소·목적만 수정하고, 신규 날짜는 추가합니다. 진행할까요?"
   if([Windows.Forms.MessageBox]::Show($form,$text,'출장 등록 확인','OKCancel','Question') -ne 'OK'){return}
   Start-TripJob @{operation='submit';review_id=$script:reviewId;total=(Target-Amount);rows=$entries}
  }
@@ -126,7 +130,7 @@ $grid.Add_CellValueChanged({param($sender,$eventArgs)
  $row=$grid.Rows[$eventArgs.RowIndex];if(-not $row.Tag){return};$name=$grid.Columns[$eventArgs.ColumnIndex].Name
  $script:loading=$true
  try{
-  if($script:stage -eq 1 -and $name -eq 'selected' -and $row.Cells['selected'].Value -and -not $row.Tag.selected){
+  if($script:stage -eq 1 -and -not $row.Tag.is_existing -and $name -eq 'selected' -and $row.Cells['selected'].Value -and -not $row.Tag.selected){
    $others=0;foreach($other in $grid.Rows){if($other -ne $row -and $other.Cells['selected'].Value){$others+=Row-Amount $other}}
    $left=(Target-Amount)-$script:existing-$others
    if($left -lt 10000){$row.Cells['selected'].Value=$false;$status.Text='목표 금액을 이미 채웠습니다. 다른 날짜를 해제하거나 시간을 줄이면 다시 선택할 수 있습니다.'}
@@ -182,6 +186,11 @@ if($SelfTest){
  $grid.Rows[0].Cells['purpose'].Value='예시 출장목적';$grid.Rows[0].Cells['selected'].Value=$false;Update-Totals;if(-not $submit.Enabled){throw '체크 해제 후 부분 등록 실패'}
  $grid.Rows[0].Cells['selected'].Value=$true;Update-Totals
  Change-Stage 1;if($grid.Rows.Count -ne 3){throw '전체 일정 복귀 실패'}
+ $saved=[PSCustomObject]@{date='2026-10-13';weekday='화';checkin='08:35';checkout='18:00';mandatory=$false;event_day=$false;is_existing=$true;selected=$true;blocked=$false;hours=4;start_hour=13;start='13:00';end='17:00';amount=20000;existing_amount=20000;existing_hours=4;location='저장된 장소';purpose='저장된 목적';status='기존 등록'}
+ $script:existing=20000;$script:allRows=@($saved);$total.Value=2;Change-Stage 2
+ if(-not $submit.Enabled -or $grid.Rows[0].Cells['selected'].ReadOnly -or $grid.Rows[0].Cells['location'].ReadOnly -or -not $grid.Rows[0].Cells['start_hour'].ReadOnly){throw '기존 출장 수정/금액 중복 합산 검사 실패'}
+ if($grid.Rows[0].Cells['location'].Value -ne '저장된 장소' -or $grid.Rows[0].Cells['purpose'].Value -ne '저장된 목적'){throw '기존 장소·목적 불러오기 실패'}
+
  if($PreviewPath){Change-Stage 2;$script:loading=$true;$form.Controls.Remove($allocate);$form.Controls.Remove($complete);$grid.Columns.Remove('attendance');Write-UiPreview $form $PreviewPath}
  Write-Output 'TRIPS_UI_OK: budget limit, 2h fit, selected-only detail stage, optional event dates, editable times and manual details';$form.Dispose();$timer.Dispose();return
 }

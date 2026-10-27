@@ -50,7 +50,7 @@ class TripPlanning(unittest.TestCase):
     def test_existing_day_is_capped_at_four_hours_and_not_selected(self):
         old=[dict(date='2026-10-07',start='09:00',end='18:00')]
         result=trips.make_rows([attendance('2026-10-07')],{'2026-10-07':{'exclude_overtime':True}},old,date(2026,10,27))
-        self.assertEqual(result[0]['existing_amount'],20000);self.assertFalse(result[0]['selected']);self.assertTrue(result[0]['blocked'])
+        self.assertEqual(result[0]['existing_amount'],20000);self.assertFalse(result[0]['selected']);self.assertFalse(result[0]['blocked'])
     def test_existing_two_hour_trip_is_not_displayed_as_four_hours(self):
         old=[dict(date='2026-10-13',start='09:00',end='11:00')]
         result=trips.make_rows([attendance('2026-10-13')],{},old,date(2026,10,27))
@@ -77,6 +77,25 @@ class TripPlanning(unittest.TestCase):
         self.assertEqual([r['date'] for r in result if r['selected']],[entry['date']])
         with self.assertRaisesRegex(ValueError,'장소와 목적'):
             trips.submission_rows(rows,[dict(entry,location='')])
+
+    def test_existing_places_purposes_and_times_are_loaded_and_counted_once(self):
+        old=[dict(date='2026-10-13',start='13:00',end='17:00',location='기존 장소',purpose='기존 목적')]
+        rows=trips.make_rows([attendance('2026-10-13')],{},old,date(2026,10,27))
+        self.assertEqual((rows[0]['location'],rows[0]['purpose']),('기존 장소','기존 목적'))
+        self.assertTrue(rows[0]['is_existing']);rows[0]['selected']=True
+        self.assertEqual(trips.summarize(rows,20000,20000)['remaining_amount'],0)
+        edited=trips.submission_rows(rows,[dict(rows[0],location='새 장소',purpose='새 목적')])[0]
+        self.assertEqual((edited['start'],edited['end']),('13:00','17:00'))
+        with self.assertRaisesRegex(ValueError,'장소·목적만'):
+            trips.submission_rows(rows,[dict(rows[0],start_hour=14)])
+    def test_existing_morning_trip_is_editable_on_a_short_attendance_day(self):
+        old=[dict(date='2026-10-13',start='09:00',end='11:00',location='오전 장소',purpose='오전 목적')]
+        row=trips.make_rows([attendance('2026-10-13',co='12:00')],{},old,date(2026,10,27))[0]
+        self.assertFalse(row['blocked']);self.assertEqual((row['start'],row['end']),('09:00','11:00'))
+    def test_multiple_records_on_one_day_are_not_arbitrarily_edited(self):
+        old=[dict(date='2026-10-13',start='09:00',end='11:00'),dict(date='2026-10-13',start='13:00',end='15:00')]
+        row=trips.make_rows([attendance('2026-10-13')],{},old,date(2026,10,27))[0]
+        self.assertTrue(row['blocked']);self.assertIn('여러 출장',row['status'])
 
 class TripJobs(unittest.TestCase):
     setUp=fixtures.StateTests.setUp
@@ -126,10 +145,20 @@ class TripJobs(unittest.TestCase):
             page.return_value.existing.return_value=[dict(date='2026-10-07',start='09:00',end='18:00')]
             result=trips.run_job(app,dict(operation='inspect',review_id='fixture',total=40000,rows=rows))
         self.assertTrue(result['ready']);self.assertEqual(result['summary']['existing_amount'],20000)
-        self.assertFalse(result['rows'][0]['selected']);self.assertTrue(result['rows'][0]['blocked'])
+        self.assertTrue(result['rows'][0]['selected']);self.assertFalse(result['rows'][0]['blocked'])
         page.return_value.submit.assert_not_called()
         self.assertTrue(app.load_json(app.STATE_FILE,{})['trip_review']['existing_verified'])
 
+    def test_load_existing_for_edit_does_not_select_new_dates(self):
+        rows=self.prepare();driver=Mock()
+        saved=dict(date='2026-10-07',start='09:00',end='18:00',location='기존 장소',purpose='기존 목적')
+        with patch('monthly_reconcile._connect',return_value=(driver,Mock())),patch('monthly_reconcile._read_month',return_value=rows),patch('trip_site.TripPage') as page:
+            page.return_value.existing.return_value=[saved]
+            result=trips.run_job(app,dict(operation='inspect',review_id='fixture',total=40000,rows=rows,edit_existing=True))
+        self.assertTrue(result['ready'])
+        self.assertEqual([r['date'] for r in result['rows'] if r['selected']],['2026-10-07'])
+        self.assertEqual(result['rows'][0]['location'],'기존 장소')
+        page.return_value.submit.assert_not_called()
     def test_changed_rules_invalidate_the_review(self):
         rows=self.prepare();state=app.load_json(app.STATE_FILE,{});state['day_rules']={};app.save_json(app.STATE_FILE,state)
         with patch.object(app,'create_driver') as driver:

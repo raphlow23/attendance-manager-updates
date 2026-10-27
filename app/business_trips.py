@@ -71,23 +71,23 @@ def make_rows(attendance,rules,existing,today):
         if not valid:continue
         registered=totals.get(key)
         row=dict(date=key,weekday='월화수목금토일'[date.fromisoformat(key).weekday()],checkin=record.get('checkin',''),checkout=record.get('checkout',''),
-                 mandatory=False,event_day=event_day,selected=False,blocked=not valid or bool(registered),
+                 mandatory=False,event_day=event_day,selected=False,blocked=not valid or bool(registered and len(registered['records'])!=1),is_existing=bool(registered),
                  location='',purpose='',existing_hours=registered['hours'] if registered else 0,existing_amount=registered['amount'] if registered else 0)
-        row['status']='등록 완료 · 중복 제외' if registered else '선택 가능'
+        row['status']=('기존 등록 · 장소·목적 수정 가능' if len(registered['records'])==1 else '같은 날 여러 출장 · 사이트에서 수정 필요') if registered else '선택 가능'
         try:row.update(window(row,4))
         except (ValueError,TypeError):
             try:row.update(window(row,2))
             except (ValueError,TypeError):row.update(hours=2,start_hour=9,start='09:00',end='11:00',amount=10000,blocked=True,selected=False,status='출퇴근 구간에 2시간 출장 불가')
         if registered:
             ordered=sorted(registered['records'],key=lambda item:item['start'])
-            row.update(hours=registered['hours'],amount=registered['amount'],start=ordered[0]['start'],end=ordered[-1]['end'],start_hour=minutes(ordered[0]['start'])//60)
+            row.update(hours=registered['hours'],amount=registered['amount'],start=ordered[0]['start'],end=ordered[-1]['end'],start_hour=minutes(ordered[0]['start'])//60,location=ordered[0].get('location',''),purpose=ordered[0].get('purpose',''),blocked=len(registered['records'])!=1,status='기존 등록 · 장소·목적 수정 가능' if len(registered['records'])==1 else '같은 날 여러 출장 · 사이트에서 수정 필요')
         rows.append(row)
     return rows
 
 
 def summarize(rows,total,existing_amount=0):
     money(total)
-    planned=sum(r['amount'] for r in rows if r.get('selected') and not r.get('blocked'))
+    planned=sum(r['amount'] for r in rows if r.get('selected') and not r.get('blocked') and not r.get('is_existing'))
     remaining=total-existing_amount-planned
     message=(f'출장 추가 필요: {remaining//RATE}시간 / {remaining:,}원 부족' if remaining>0 else
              f'목표 초과: {-remaining//RATE}시간 / {-remaining:,}원' if remaining<0 else '목표 금액·인정시간 일치')
@@ -100,7 +100,7 @@ def allocate(rows,total,existing_amount=0,preferred_hours=4):
     if preferred_hours not in (2,4):raise ValueError('기본 출장 시간을 선택하세요.')
     result=deepcopy(rows)
     remaining=total-existing_amount
-    candidates=[r for r in result if r.get('selected') and not r['blocked']]
+    candidates=[r for r in result if r.get('selected') and not r['blocked'] and not r.get('is_existing')]
     states={0:[]}
     for row in candidates:
         choices=[]
@@ -128,7 +128,9 @@ def merge_entries(rows,entries,require_details=False):
         selected=bool(entry.get('selected'))
         if row['blocked'] and selected:raise ValueError(f'{key}: {row["status"]}')
         row.update(selected=selected,location=str(entry.get('location','')).strip(),purpose=str(entry.get('purpose','')).strip())
-        if not row['blocked']:
+        if row.get('is_existing'):
+            if selected and (entry.get('hours',row['hours'])!=row['hours'] or entry.get('start_hour',row['start_hour'])!=row['start_hour'] or entry.get('end',row['end'])!=row['end']):raise ValueError('기존 출장 수정은 장소·목적만 변경할 수 있습니다.')
+        elif not row['blocked']:
             changed=window(dict(row,end=entry.get('end',row.get('end'))),entry.get('hours',row['hours']),entry.get('start_hour',row['start_hour']))
             if entry.get('end') and entry['end']!=changed['end']:raise ValueError('출장 복귀 시간이 인정시간과 일치하지 않습니다.')
             row.update(changed)
@@ -190,7 +192,7 @@ def run_job(app,job):
         if not review.get('existing_verified'):raise ValueError('선택 완료를 눌러 기존 출장 내역을 먼저 확인하세요.')
         rows=submission_rows(review['rows'],job.get('rows',[]))
         summary=summarize(rows,money(job['total']),review['existing_amount'])
-        if summary['remaining_amount']<0:raise ValueError(summary['message']+' · 날짜/시간 선택을 줄이세요.')
+        if summary['remaining_amount']<0 and any(r['selected'] and not r.get('is_existing') for r in rows):raise ValueError(summary['message']+' · 날짜/시간 선택을 줄이세요.')
         if any(r.get('conflict') for r in rows):raise ValueError('연장 제외일의 기존 출장 시간을 사이트에서 먼저 확인하세요.')
         chosen=[r for r in rows if r['selected'] and not r['blocked']]
         if not chosen:raise ValueError('등록할 출장 날짜를 선택하세요.')
@@ -224,8 +226,12 @@ def run_job(app,job):
             if operation=='inspect':
                 fresh_rows=make_rows(attendance,rules,existing,date.today())
                 previous={r['date']:r for r in rows}
-                entries=[dict(previous[r['date']]) for r in fresh_rows if r['date'] in previous and not r['blocked']]
+                entries=[dict(previous[r['date']]) for r in fresh_rows if r['date'] in previous and not r['blocked'] and not r.get('is_existing')]
                 rows=merge_entries(fresh_rows,entries)
+                if job.get('edit_existing'):
+                    for row in rows:row['selected']=False
+                for row in rows:
+                    if row.get('is_existing') and not row['blocked']:row['selected']=bool(job.get('edit_existing') or previous.get(row['date'],{}).get('selected'))
                 for row in rows:
                     if state.get('trip_applications',{}).get(row['date'],{}).get('status') in ('sending','uncertain') and not row['existing_amount']:
                         row.update(blocked=True,selected=False,status='이전 등록 결과 확인 필요')
@@ -233,27 +239,31 @@ def run_job(app,job):
                 with app.file_lock('state'):
                     state=app.load_json(app.STATE_FILE,{});state['trip_review']=review;app.save_json(app.STATE_FILE,state)
                 summary=summarize(rows,job['total'],existing_amount)
-                ready=summary['remaining_amount']==0 and any(r['selected'] and not r['blocked'] for r in rows) and not any(r.get('conflict') for r in rows)
+                ready=any(r['selected'] and not r['blocked'] for r in rows) and (summary['remaining_amount']==0 or not any(r['selected'] and not r.get('is_existing') for r in rows)) and not any(r.get('conflict') for r in rows)
                 return dict(ok=True,review_id=review['id'],rows=rows,summary=summary,ready=ready,message='기존 출장 확인 완료. 선택 날짜의 장소·목적을 입력하세요.' if ready else '기존 출장 확인 완료. '+summary['message']+' · 날짜·시간 선택을 확인하세요.')
             if existing!=review['existing']:raise ValueError('기존 출장 내역이 바뀌었습니다. 다시 조회하세요.')
             with app.file_lock('state'):
                 state=app.load_json(app.STATE_FILE,{});state['trip_review']['consumed']=True;app.save_json(app.STATE_FILE,state)
             for row in sorted(chosen,key=lambda r:r['date']):
                 key=row['date']
-                if any(e['date']==key for e in trips.existing(month)):raise ValueError(f'{key}: 기존 출장이 있어 중복 등록을 중단합니다.')
+                matches=[e for e in trips.existing(month) if e['date']==key]
+                if row.get('is_existing'):
+                    expected=[e for e in review['existing'] if e['date']==key]
+                    if len(matches)!=1 or matches!=expected:raise ValueError(f'{key}: 기존 출장 내용이 달라져 수정을 중단합니다.')
+                elif matches:raise ValueError(f'{key}: 기존 출장이 있어 중복 등록을 중단합니다.')
                 with app.file_lock('state'):
                     state=app.load_json(app.STATE_FILE,{});state.setdefault('trip_applications',{})[key]=dict(status='sending',row=row,at=time.time());app.save_json(app.STATE_FILE,state)
                 attempted=True
                 app.log_event(f'{key} 출장 날짜별 등록 시작')
-                trips.submit(row,month)
-                submitted.append(key);row['status']='등록 확인 완료'
+                trips.submit(row,month,update=True) if row.get('is_existing') else trips.submit(row,month)
+                submitted.append(key);row['status']='수정 확인 완료' if row.get('is_existing') else '등록 확인 완료'
                 with app.file_lock('state'):
                     state=app.load_json(app.STATE_FILE,{});state['trip_applications'][key]['status']='success';app.save_json(app.STATE_FILE,state)
                 app.log_event(f'{key} 출장 등록 확인 완료')
             final=trips.existing(month)
             final_amount=sum(v['amount'] for v in existing_totals(final).values())
             summary=summarize([],job['total'],final_amount)
-            return dict(ok=True,rows=chosen,all_rows=make_rows(attendance,rules,final,date.today()),summary=summary,message=f'출장 {len(submitted)}일 등록 확인 완료. '+summary['message'])
+            return dict(ok=True,rows=chosen,all_rows=make_rows(attendance,rules,final,date.today()),summary=summary,message=f'출장 {len(submitted)}일 등록·수정 확인 완료. '+summary['message'])
         except Exception as error:
             if operation!='submit' or not attempted:raise
             with app.file_lock('state'):

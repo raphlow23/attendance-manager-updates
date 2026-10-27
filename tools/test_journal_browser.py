@@ -19,12 +19,25 @@ NAV='<a href="/attendance">근태관리</a><a href="/work">근무일지</a>'
 def inp(name,value='',placeholder=''):return f'<input name="{name}" value="{escape(str(value),quote=True)}" placeholder="{placeholder}">'
 def sel(name,options):return '<select name="'+name+'">'+''.join(f'<option value="{v}">{label}</option>' for v,label in options)+'</select>'
 def numbers(name,limit,unit):return sel(name,[(str(n),str(n)+unit) for n in range(limit)])
-def trip_page():
+def trip_page(edit=None):
+    saved=trip_records[edit] if edit is not None else None
     form='<form method="post" action="/trip-save">'+inp('nonce','fixture-token') .replace('<input ','<input type="hidden" ',1)
     form+=sel('kind',[('x','선택'),('center','센터')])+inp('y',2026)+inp('m',10)+inp('d',27)+inp('place','','출장장소')+inp('purpose','','출장목적을 구체적으로 입력하세요')
     form+=sel('transport',[('x','선택'),('public','대중교통')])+numbers('sh',24,'시')+numbers('sm',60,'분')+numbers('eh',24,'시')+numbers('em',60,'분')+'<button type="submit">확인</button></form>'
     heads=''.join('<th>'+t+'</th>' for t in ('구분','출장일','출장장소','출장목적','이동수단','출발시간','복귀시간','출장시간'))
     body=''.join('<tr>'+''.join('<td>'+escape(str(v))+'</td>' for v in ('센터',f"{int(r['date'][5:7])}월 {int(r['date'][8:])}일 (수)",r['location'],r['purpose'],'대중교통',r['start'],r['end'],'시간'))+'</tr>' for r in trip_records)
+    if saved:
+        form=form.replace('action="/trip-save"','action="/trip-update?index='+str(edit)+'"')
+        for name,value in dict(y=int(saved['date'][:4]),m=int(saved['date'][5:7]),d=int(saved['date'][8:]),place=saved['location'],purpose=saved['purpose']).items():
+            placeholder='출장장소' if name=='place' else '출장목적을 구체적으로 입력하세요' if name=='purpose' else ''
+            previous=2026 if name=='y' else 10 if name=='m' else 27 if name=='d' else ''
+            form=form.replace(inp(name,previous,placeholder),inp(name,value,placeholder))
+        for name,value in dict(kind='center',transport='public',sh=int(saved['start'][:2]),sm=int(saved['start'][3:]),eh=int(saved['end'][:2]),em=int(saved['end'][3:])).items():
+            a=form.index('<select name="'+name+'">');b=form.index('</select>',a)
+            form=form[:a]+form[a:b].replace('value="'+str(value)+'"','value="'+str(value)+'" selected')+form[b:]
+        form=form.replace('>확인</button>','>수정완료</button>')
+    body=body.replace('</tr>','<td>EDIT</td></tr>')
+    for index in range(len(trip_records)):body=body.replace('EDIT','<a href="/trip-edit?index='+str(index)+'">수정</a>',1)
     return NAV+'<h2>출장 등록하기</h2>'+form+'<h2>사용자님의 10월 출장일지</h2><table><thead><tr>'+heads+'</tr></thead><tbody>'+body+'</tbody></table>'
 def overtime_page(edit=None):
     r=ot_records[edit] if edit is not None else None
@@ -47,6 +60,7 @@ class Handler(BaseHTTPRequestHandler):
         if path=='/work' and direct_trip_landing:content=trip_page()
         elif path=='/work':content=NAV+'<div><span><h3>출장일지</h3></span><a href="/trips">바로가기</a></div><div><span><h3>시간외근무신청</h3></span><a href="/overtime">바로가기</a></div>'
         elif path in ('/trips','/sappd_g6.php'):content=trip_page()
+        elif path=='/trip-edit':content=trip_page(int(parse_qs(urlsplit(self.path).query)['index'][0]))
         elif path=='/overtime':content=overtime_page()
         elif path=='/ot-edit':content=overtime_page(int(parse_qs(urlsplit(self.path).query)['index'][0]))
         elif path=='/ot-success':content=NAV+'<h2>신청 저장 완료</h2>'
@@ -58,10 +72,13 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200);self.send_header('Content-Type','text/html; charset=utf-8');self.end_headers();self.wfile.write(('<meta charset="utf-8">'+content).encode())
     def do_POST(self):
         fields={k:v[0] for k,v in parse_qs(self.rfile.read(int(self.headers['Content-Length'])).decode(),keep_blank_values=True).items()}
-        if self.path=='/trip-save':
+        if urlsplit(self.path).path in ('/trip-save','/trip-update'):
             assert fields['kind']=='center' and fields['transport']=='public' and fields['nonce']=='fixture-token'
             row=dict(date=f"{int(fields['y']):04}-{int(fields['m']):02}-{int(fields['d']):02}",location=fields['place'],purpose=fields['purpose'],start=f"{int(fields['sh']):02}:{int(fields['sm']):02}",end=f"{int(fields['eh']):02}:{int(fields['em']):02}")
-            trip_records.append(row);posts.append(('trip',row['date']));target='/trips'
+            if urlsplit(self.path).path=='/trip-update':
+                trip_records[int(parse_qs(urlsplit(self.path).query)['index'][0])]=row;posts.append(('trip-update',row['date']))
+            else:trip_records.append(row);posts.append(('trip',row['date']))
+            target='/trips'
         elif urlsplit(self.path).path in ('/ot-save','/ot-update'):
             updating=urlsplit(self.path).path=='/ot-update'
             assert fields['dept']==('센터' if updating else 'center') and fields['year']==fields['fy'] and fields['month']==fields['fm'] and fields['day']==fields['fd']
@@ -111,6 +128,17 @@ try:
     result=trips.run_job(app,dict(operation='submit',review_id=partial['review_id'],total=80000,rows=plans))
     assert result['ok'] and [r['date'] for r in result['rows']]==['2026-10-14'] and result['summary']['remaining_amount']==40000,result
     assert [r['date'] for r in trip_records]==['2026-10-07','2026-10-13','2026-10-14']
+    loaded=trips.run_job(app,dict(operation='scan',month='2026-10',total=40000))
+    loaded=trips.run_job(app,dict(operation='inspect',review_id=loaded['review_id'],total=40000,rows=[],edit_existing=True))
+    assert loaded['ready'] and sum(r['selected'] for r in loaded['rows'])==3,loaded
+    edits=[dict(r,selected=r['date']=='2026-10-14') for r in loaded['rows']]
+    edit=next(r for r in edits if r['selected']);assert edit['location']=='직접 입력 장소' and edit['purpose']=='등록할 목적'
+    edit.update(location='수정한 장소',purpose='수정한 출장 목적')
+    edited=trips.run_job(app,dict(operation='submit',review_id=loaded['review_id'],total=40000,rows=edits))
+    assert edited['ok'] and edited['rows'][0]['status']=='수정 확인 완료',edited
+    assert len(trip_records)==3 and trip_records[-1]['location']=='수정한 장소' and trip_records[-1]['purpose']=='수정한 출장 목적'
+    assert (trip_records[-1]['start'],trip_records[-1]['end'])==('13:00','15:00')
+    assert [r for r in posts if r[0]=='trip-update']==[('trip-update','2026-10-14')]
     driver,_=connect()
     try:
      from attendance_recovery import AttendancePage
@@ -146,5 +174,5 @@ try:
      assert len(rejected)==1 and rejected[0]['status'].startswith('확인 필요:') and statuses[rows[0]['date']]['status']=='uncertain',rejected
      assert len(ot_records)==3 and ot_records[0]['purpose']=='수정한 새 근무목적'
     finally:driver.quit()
-   print('JOURNAL_BROWSER_OK: attendance month 10→9→10 with native clicks disabled; trip short-date history after POST verified / no duplicate; trip workflow + unchecked/blank-purpose exclusions and partial-budget warning + work-log direct form + user-supplied direct URL without menu links; overtime purpose absent from list / success page without history / observed-page refresh / two sequential POSTs / existing date purpose updated once / uncertain missing date added / detail purpose verified / no duplicate dates; no target-site requests')
+   print('JOURNAL_BROWSER_OK: attendance month 10→9→10 with native clicks disabled; trip existing place/purpose loaded and updated with unchanged time / no duplicate; trip short-date history after POST verified / no duplicate; trip workflow + unchecked/blank-purpose exclusions and partial-budget warning + work-log direct form + user-supplied direct URL without menu links; overtime purpose absent from list / success page without history / observed-page refresh / two sequential POSTs / existing date purpose updated once / uncertain missing date added / detail purpose verified / no duplicate dates; no target-site requests')
 finally:server.shutdown();server.server_close();thread.join()
