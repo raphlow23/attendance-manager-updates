@@ -48,6 +48,7 @@ function Invoke-WorkdayUpdate([string]$Root, $Manifest = $null) {
     $backups = @()
     $actionLock = $null
     $paused = $false
+    $resumeGuard = $false
     try {
         $config = Get-Content -LiteralPath $configFile -Raw -Encoding UTF8 | ConvertFrom-Json
         if (-not $config.enabled -or -not $config.manifest_url) { return '자동 업데이트: 배포 주소 연결 전' }
@@ -84,6 +85,11 @@ function Invoke-WorkdayUpdate([string]$Root, $Manifest = $null) {
         $actionLock = New-Object IO.FileStream($actionPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::ReadWrite)
         if ($actionLock.Length -eq 0) { $actionLock.SetLength(1) }
         try { $actionLock.Lock(0,1) } catch { throw '자동화 처리 중이므로 업데이트는 다음 실행에 적용합니다.' }
+        $guardianStatus = Join-Path $Root 'dist\guardian-status.json'
+        if (Test-Path -LiteralPath $guardianStatus) {
+            $priorGuard = Get-Content -LiteralPath $guardianStatus -Raw -Encoding UTF8 | ConvertFrom-Json
+            $resumeGuard = ($priorGuard.state -in @('running','recovering')) -and [bool](Get-Process -Id $priorGuard.pid -ErrorAction SilentlyContinue)
+        }
         [IO.File]::WriteAllText((Join-Path $Root 'dist\update.pause'), 'update in progress')
         $paused = $true
         $guardianStatus = Join-Path $Root 'dist\guardian-status.json'
@@ -111,7 +117,7 @@ function Invoke-WorkdayUpdate([string]$Root, $Manifest = $null) {
         if ($actionLock) { try { $actionLock.Unlock(0,1) } catch {}; $actionLock.Dispose() }
         if ($paused) {
             Remove-Item -LiteralPath (Join-Path $Root 'dist\update.pause') -Force -ErrorAction SilentlyContinue
-            if (-not (Test-Path -LiteralPath (Join-Path $Root 'dist\automation.stop'))) { Start-Process -FilePath (Join-Path $Root 'WorkdayGuard.exe') -WindowStyle Hidden }
+            if ($resumeGuard -and -not (Test-Path -LiteralPath (Join-Path $Root 'dist\automation.stop'))) { Start-Process -FilePath (Join-Path $Root 'WorkdayGuard.exe') -WindowStyle Hidden }
         }
     }
 }

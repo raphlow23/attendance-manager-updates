@@ -211,6 +211,7 @@ def run_job(app, job):
         try:
             driver.set_page_load_timeout(45)
             driver.get(app.SITE_URL)
+            app.check_site_response(driver)
             wait = WebDriverWait(driver, 20)
             wait.until(EC.visibility_of_element_located((By.NAME, 'iduser'))).send_keys(settings['id'])
             driver.find_element(By.NAME, 'pass').send_keys(settings['pw'])
@@ -236,5 +237,8 @@ def run_job(app, job):
                     state['overtime_applications'] = values
                     app.save_json(app.STATE_FILE, state)
             return {'ok': True, 'rows': submit_rows(page, job['rows'], rows, statuses, persist)}
+        except Exception:
+            app.check_site_response(driver)
+            raise
         finally:
             driver.quit()

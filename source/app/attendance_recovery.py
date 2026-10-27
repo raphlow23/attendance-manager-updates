@@ -132,13 +132,21 @@ class AttendancePage:
 
     def correct(self, day, targets, expected):
         """User-reviewed correction; preserve notes and reject stale snapshots."""
+        self.driver._workday_write_submitted = False
         if not targets or set(targets) - {'checkin', 'checkout'}:
             raise ValueError('정정할 출퇴근 시간을 확인하세요.')
         before = self.record(day)
         if any(before[k] != expected[k] for k in ('checkin', 'checkout', 'note')):
             raise RuntimeError('조회 후 기록이 변경되었습니다. 다시 조회하세요.')
         controls = before["edit_cell"].find_elements(By.CSS_SELECTOR, "a, button, input")
-        one([c for c in controls if label(c) == "수정"], "해당 날짜의 수정 버튼").click()
+        edit = one([c for c in controls if label(c) == "수정"], "해당 날짜의 수정 버튼")
+        guard = getattr(self.driver, '_workday_before_write', None)
+        if guard:
+            guard()
+        edit.click()
+        response_check = getattr(self.driver, '_workday_check_response', None)
+        if response_check:
+            response_check()
 
         def edit_table(_):
             candidates = []
@@ -180,7 +188,10 @@ class AttendancePage:
         if any(current[key] != before[key] for key in ("checkin", "checkout", "note")):
             raise RuntimeError("다른 곳에서 근태 기록이 변경되어 저장을 중단합니다.")
         save = one([c for c in cells[3].find_elements(By.CSS_SELECTOR, "button, a, input") if label(c) == "수정완료"], "수정완료 버튼")
+        self.driver._workday_write_submitted = True
         save.click()
+        if response_check:
+            response_check()
 
         def verified(_):
             try:

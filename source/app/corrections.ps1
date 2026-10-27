@@ -6,6 +6,7 @@ Add-Type -AssemblyName System.Drawing
 . (Join-Path $PSScriptRoot 'session.ps1')
 $dataRoot=Join-Path $PSScriptRoot 'dist'
 $script:worker=$null; $script:snapshot=@{}; $script:jobPath=$null
+$script:reviewId=$null;$script:reviewBaseRows=@();$script:reviewTargetDays=0;$script:loadingReview=$false
 $form=New-Object Windows.Forms.Form
 $form.Text='출근정리 — 휴가·연장 제외일 및 근태 정정'
 $form.Size=New-Object Drawing.Size(1050,880)
@@ -17,7 +18,7 @@ function Label($text,$x,$y,$width) {
 function Button($text,$x,$y,$width) {
  $c=New-Object Windows.Forms.Button; $c.Text=$text; $c.Location=New-Object Drawing.Point($x,$y); $c.Size=New-Object Drawing.Size($width,38); $form.Controls.Add($c); return $c
 }
-Label '휴가·제외일을 저장하면 해당 월 기록을 자동 정리합니다. 연장 제외일은 09:00~18:00입니다.' 20 15 730
+Label '달력 저장 → 수정 목록 조회 → 날짜·시간 확인 → 선택 내역 정리 순서로 실행하세요.' 20 15 730
 Label '설정 날짜' 20 61 85
 $dayPicker=New-Object Windows.Forms.DateTimePicker
 $dayPicker.Format='Custom'; $dayPicker.CustomFormat='yyyy-MM-dd'
@@ -31,14 +32,20 @@ Label '체크를 해제하고 저장하면 제외를 해제합니다. 연장 제
 Label '조회 월' 20 147 85
 $month=New-Object Windows.Forms.ComboBox; $month.DropDownStyle='DropDownList'; $month.Location=New-Object Drawing.Point(110,140); $month.Width=180
 foreach($item in (Get-WorkdayMonthLabels (Get-Date))) { [void]$month.Items.Add($item) }; $month.SelectedIndex=0; $form.Controls.Add($month)
-$scan=Button '선택 월 조회·자동 정리' 310 136 230
+$scan=Button '선택 월 수정 목록 조회' 310 136 230
 Label '계정은 자동관리 설정에 저장한 ID/PW를 사용합니다.' 560 147 450
 $grid=New-Object Windows.Forms.DataGridView
 $grid.Location=New-Object Drawing.Point(20,190); $grid.Size=New-Object Drawing.Size(990,260)
-$grid.AllowUserToAddRows=$false; $grid.AllowUserToDeleteRows=$false; $grid.ReadOnly=$true; $grid.RowHeadersVisible=$false
+$grid.AllowUserToAddRows=$false; $grid.AllowUserToDeleteRows=$false; $grid.ReadOnly=$false; $grid.RowHeadersVisible=$false
 $grid.SelectionMode='FullRowSelect'; $grid.MultiSelect=$false; $grid.AutoSizeColumnsMode='Fill'
-foreach($spec in @(@('date','날짜'),@('checkin','기존 출근'),@('checkout','기존 퇴근'),@('rule','제외 설정 / 확인 상태'),@('note','기존 비고'))) {
- [void]$grid.Columns.Add($spec[0],$spec[1])
+$chooseColumn=New-Object Windows.Forms.DataGridViewCheckBoxColumn
+$chooseColumn.Name='choose';$chooseColumn.HeaderText='선택';$chooseColumn.FillWeight=35
+[void]$grid.Columns.Add($chooseColumn)
+foreach($spec in @(@('date','날짜',95),@('before_checkin','기존 출근',75),@('before_checkout','기존 퇴근',75),@('checkin','변경 출근',85),@('checkout','변경 퇴근',85),@('reason','정리 사유',160),@('status','상태',160),@('note','비고',140))) {
+ $column=New-Object Windows.Forms.DataGridViewTextBoxColumn
+ $column.Name=$spec[0];$column.HeaderText=$spec[1];$column.FillWeight=$spec[2]
+ $column.ReadOnly=($spec[0] -notin @('checkin','checkout'))
+ [void]$grid.Columns.Add($column)
 }
 $form.Controls.Add($grid)
 Label '정정 날짜' 20 471 90
@@ -77,7 +84,7 @@ foreach($control in @($form.Controls)){
  elseif($control.Top -ge 260 -and $control.Top -le 300){$control.Top+=75}
 }
 $grid.Top=390;$grid.Height=180;$summaryLabel.Top=575
-$grid.Columns['checkin'].HeaderText='출근시간';$grid.Columns['checkout'].HeaderText='퇴근시간'
+
 $vacation.Location=New-Object Drawing.Point(245,302);$exclude.Top=302;$saveRule.Top=298
 $rulesGrid.Location=New-Object Drawing.Point(650,45);$rulesGrid.Size=New-Object Drawing.Size(360,245)
 $rulesGrid.Columns['date'].HeaderText='저장 날짜';$rulesGrid.Columns['date'].FillWeight=130
@@ -127,7 +134,7 @@ function Render-Calendar {
   $button.ForeColor=[Drawing.ColorTranslator]::FromHtml('#343C46')
  }
  $chosenLabel.Text="선택 $($script:chosenDates.Count)개 · 재클릭하면 해제"
- $saveRule.Text="선택 $($script:chosenDates.Count)개 저장·월 자동정리"
+ $saveRule.Text="선택 $($script:chosenDates.Count)개 설정 저장"
 }
 $calendarPrev.Add_Click({$script:calendarMonth=$script:calendarMonth.AddMonths(-1);Render-Calendar})
 $calendarNext.Add_Click({$script:calendarMonth=$script:calendarMonth.AddMonths(1);Render-Calendar})
@@ -176,9 +183,55 @@ function Read-Rule {
   try {
    $state=Get-Content -LiteralPath $path -Raw -Encoding UTF8|ConvertFrom-Json
    $key=$dayPicker.Value.ToString('yyyy-MM-dd'); $rule=$state.day_rules.$key
-   $vacation.Checked=[bool]$rule.vacation; $exclude.Checked=[bool]$rule.exclude_overtime
+   $vacation.Checked=[bool]$rule.vacation; $exclude.Checked=([bool]$rule.exclude_overtime -and -not $vacation.Checked)
   } catch { $status.Text='저장된 제외일을 읽지 못했습니다. 실행 상태에서 오류를 확인하세요.' }
  }
+}
+function Clock-Minutes($Value) {
+ $text=([string]$Value)-replace '\s',''
+ if($text -match '^(\d{1,2}):(\d{1,2})$'){
+  $h=[int]$Matches[1];$m=[int]$Matches[2]
+  if($h -lt 24 -and $m -lt 60){return $h*60+$m}
+ }
+ return -1
+}
+function Format-Clock($Value) {
+ $m=Clock-Minutes $Value
+ if($m -lt 0){return ''}
+ return ('{0:D2}:{1:D2}' -f [int][Math]::Floor($m/60),($m%60))
+}
+function Update-ReviewSummary {
+ if($script:loadingReview){return}
+ $times=@{}
+ foreach($entry in $script:reviewBaseRows){$times[$entry.date]=@{ci=(Clock-Minutes $entry.checkin);co=(Clock-Minutes $entry.checkout);eligible=[bool]$entry.eligible}}
+ $chosen=0;$valid=$true
+ foreach($row in $grid.Rows){
+  if(-not $row.Cells['choose'].Value){continue}
+  $chosen++;$ci=Clock-Minutes $row.Cells['checkin'].Value;$co=Clock-Minutes $row.Cells['checkout'].Value
+  if($ci -lt 0 -or $co -lt 0 -or $ci -ge $co){$valid=$false}
+  $key=[string]$row.Cells['date'].Value
+  if($times.ContainsKey($key)){$times[$key].ci=$ci;$times[$key].co=$co}
+ }
+ $overtime=@($times.Values|Where-Object{$_.eligible -and $_.ci -ge 0 -and $_.co -ge 1140 -and $_.ci -lt $_.co}).Count
+ $summaryLabel.Text=if($valid){"선택 $chosen 건 · 선택 내용 반영 시 연장 $overtime / 기준 $script:reviewTargetDays 일 · 체크 해제 = 이번 정리 제외"}else{'변경 시간은 HH:MM으로 입력하고 출근이 퇴근보다 이른지 확인하세요.'}
+ $apply.Enabled=([bool]$script:reviewId -and $chosen -gt 0 -and $valid -and -not $script:worker)
+}
+function Set-ReviewView($Result) {
+ $script:loadingReview=$true
+ try{
+  $grid.Rows.Clear();$script:snapshot=@{}
+  $script:reviewId=[string]$Result.plan_id;$script:reviewBaseRows=@($Result.all_rows);$script:reviewTargetDays=[int]$Result.target_days
+  foreach($entry in $Result.rows){
+   $script:snapshot[$entry.date]=$entry.before
+   $ci=if($entry.after.checkin){$entry.after.checkin}else{Format-Clock $entry.before.checkin}
+   $co=if($entry.after.checkout){$entry.after.checkout}else{Format-Clock $entry.before.checkout}
+   $rowStatus=if($script:reviewId){$entry.status}else{'정리 완료'}
+   $index=$grid.Rows.Add(([bool]$script:reviewId -and [bool]$entry.selectable),$entry.date,$entry.before.checkin,$entry.before.checkout,$ci,$co,$entry.reason,$rowStatus,$entry.before.note)
+   $locked=(-not $script:reviewId -or [bool]$entry.blocked)
+   foreach($name in @('choose','checkin','checkout')){$grid.Rows[$index].Cells[$name].ReadOnly=$locked}
+  }
+  $status.Text=$Result.message
+ }finally{$script:loadingReview=$false;Update-ReviewSummary}
 }
 function Start-Job($job) {
  $python=Join-Path $PSScriptRoot 'runtime\python.exe'
@@ -189,93 +242,74 @@ function Start-Job($job) {
  $script:operation=$job.operation
  $script:worker=Start-WorkdayHiddenProcess $python "`"$(Join-Path $PSScriptRoot 'main.py')`" --attendance-job `"$script:jobPath`"" $PSScriptRoot
  foreach($c in $form.Controls) { if($c -ne $status) { $c.Enabled=$false } }
- $status.Text='처리 중입니다. 사이트 응답을 기다려 주세요.'; $timer.Start()
+ $status.Text=if($Job.operation -eq 'rules'){'달력 설정 저장 중입니다.'}else{'사이트 처리 중입니다. 완료될 때까지 기다려 주세요.'}; $timer.Start()
 }
 $dayPicker.Add_ValueChanged({ Read-Rule })
+$vacation.Add_CheckedChanged({if($vacation.Checked){$exclude.Checked=$false}})
+$exclude.Add_CheckedChanged({if($exclude.Checked){$vacation.Checked=$false}})
 $saveRule.Add_Click({try {
  if($script:chosenDates.Count -eq 0){throw '달력에서 저장할 날짜를 선택하세요. 여러 날짜를 클릭할 수 있습니다.'}
  Start-Job @{operation='rules';dates=@($script:chosenDates|Sort-Object);vacation=$vacation.Checked;exclude_overtime=$exclude.Checked}
 }catch{ $status.Text=$_.Exception.Message }})
 function Selected-Month { [DateTime]::ParseExact([string]$month.SelectedItem,'yyyy년 MM월',[Globalization.CultureInfo]::InvariantCulture).ToString('yyyy-MM') }
-$scan.Add_Click({try {$summaryLabel.Text='월 기록 조회·자동 정리 중';$grid.Rows.Clear();$script:snapshot=@{};Start-Job @{operation='reconcile';month=(Selected-Month)}}catch{$status.Text=$_.Exception.Message}})
-$month.Add_SelectedIndexChanged({$grid.Rows.Clear();$script:snapshot=@{};$apply.Enabled=$false;$selected.Text='조회 후 행 선택';$summaryLabel.Text='사이트 연장 기록: 해당 월을 조회하세요.'})
-$grid.Add_SelectionChanged({
- if($grid.SelectedRows.Count -eq 0) {$apply.Enabled=$false;return}
- $key=[string]$grid.SelectedRows[0].Cells['date'].Value
- $selected.Text=$key; $checkin.Clear();$checkout.Clear();$actual.Checked=$false;$reason.Clear()
- $apply.Enabled=$true
-})
+$scan.Add_Click({try {$summaryLabel.Text='수정 예정 목록을 조회 중입니다.';$grid.Rows.Clear();$script:snapshot=@{};$script:reviewId=$null;Start-Job @{operation='reconcile';month=(Selected-Month)}}catch{$status.Text=$_.Exception.Message}})
+$month.Add_SelectedIndexChanged({$grid.Rows.Clear();$script:snapshot=@{};$script:reviewId=$null;$apply.Enabled=$false;$selected.Text='조회 후 행 선택';$summaryLabel.Text='사이트 연장 기록: 해당 월을 조회하세요.'})
+$grid.Add_CurrentCellDirtyStateChanged({if($grid.IsCurrentCellDirty){[void]$grid.CommitEdit([Windows.Forms.DataGridViewDataErrorContexts]::Commit)}})
+$grid.Add_CellValueChanged({Update-ReviewSummary})
 $apply.Add_Click({
  try {
-  if(-not $actual.Checked) {throw '실제 근무 시간 확인에 체크하세요.'}
-  if([string]::IsNullOrWhiteSpace($reason.Text)) {throw '정정 사유를 입력하세요.'}
-  $key=$selected.Text; $before=$script:snapshot[$key]
-  if(-not $before) {throw '사이트 기록을 다시 조회하세요.'}
-  foreach($value in @($checkin.Text,$checkout.Text)) {if($value -and $value -notmatch '^(?:[01]\d|2[0-3]):[0-5]\d$') {throw '시간은 HH:MM 형식으로 입력하세요.'}}
-  if(-not $checkin.Text -and -not $checkout.Text) {throw '정정할 시간을 입력하세요.'}
-  $newIn=if($checkin.Text){$checkin.Text}else{'기존 유지'}; $newOut=if($checkout.Text){$checkout.Text}else{'기존 유지'}
-  $message="$key`n출근: $($before.checkin) → $newIn`n퇴근: $($before.checkout) → $newOut`n사유: $($reason.Text)`n실제 근무 기록으로 저장할까요?"
-  if([Windows.Forms.MessageBox]::Show($form,$message,'근태 정정 확인','YesNo','Question') -ne 'Yes'){return}
-  Start-Job @{operation='correct';month=(Selected-Month);date=$key;before=$before;checkin=$checkin.Text;checkout=$checkout.Text;reason=$reason.Text;confirmed_actual=$true}
+  [void]$grid.EndEdit()
+  if(-not $script:reviewId){throw '수정 목록을 먼저 조회하세요.'}
+  $entries=@()
+  foreach($row in $grid.Rows){
+   if(-not $row.Cells['choose'].Value){continue}
+   $entries+=@{date=[string]$row.Cells['date'].Value;checkin=[string]$row.Cells['checkin'].Value;checkout=[string]$row.Cells['checkout'].Value}
+  }
+  if($entries.Count -eq 0){throw '정리할 날짜를 선택하세요.'}
+  Start-Job @{operation='reconcile_apply';plan_id=$script:reviewId;rows=$entries}
  }catch{$status.Text=$_.Exception.Message}
 })
 $timer.Add_Tick({
  if(-not $script:worker -or -not $script:worker.HasExited){return};$timer.Stop()
  try {
   $result=Get-Content -LiteralPath ($script:jobPath+'.result.json') -Raw -Encoding UTF8|ConvertFrom-Json
-  if(-not $result.ok){throw $result.error}
-  if($script:operation -in @('scan','reconcile')) {
-   $grid.Rows.Clear();$script:snapshot=@{}
-   foreach($row in $result.rows){
-    $script:snapshot[$row.date]=@{checkin=$row.checkin;checkout=$row.checkout;note=$row.note}
-    $ruleText=if($row.rule.manual_hold){'자동 처리 보류 · 사이트 확인'}elseif($row.rule.vacation){'휴가'}elseif($row.rule.exclude_overtime){'연장 제외'}else{''}
-    if($row.empty_record -and -not $row.rule.manual_hold){$ruleText=if($ruleText){$ruleText+' · 기록 없음'}else{'기록 없음 · 변경 안 함'}}
-    [void]$grid.Rows.Add($row.date,$row.checkin,$row.checkout,$ruleText,$row.note)
-   }
-   $status.Text=if($script:operation -eq 'reconcile'){$result.message}else{'월 기록 조회 완료'}
-   $s=$result.summary
-   $summaryLabel.Text="사이트 연장 기록 $($s.recorded_days)일 / 설정 기준 $($s.target_days)일 · 부족 $($s.remaining_days)일 · 초과 $($s.excess_days)일 · 제외일 중 연장 기록 $($s.excluded_record_days)일 (확인 필요)"
+  $resultError=if(-not $result.ok){[string]$result.error}else{$null}
+  if($script:operation -in @('scan','reconcile','reconcile_apply')) {
+   if(-not $resultError -or $result.rows){Set-ReviewView $result}
   }else{
-   $status.Text=$result.message
-   $grid.Rows.Clear();$script:snapshot=@{};$selected.Text='조회 후 행 선택'
+   $status.Text=$result.message;$grid.Rows.Clear();$script:snapshot=@{};$script:reviewId=$null
    if($script:operation -eq 'rules'){$script:chosenDates.Clear()}
-   $summaryLabel.Text='사이트 연장 기록: 해당 월을 다시 조회하세요.'
+   $summaryLabel.Text='설정 저장 완료. 수정 목록을 조회해 주세요.'
   }
   Refresh-RuleList
+  if($resultError){throw $resultError}
  }catch{$summaryLabel.Text='사이트 연장 기록: 확인 필요';$status.Text='처리 확인 필요: '+$_.Exception.Message+' (결과가 불확실하면 사이트를 확인하고 다시 조회하세요.)'}
  finally{
   $script:worker.Dispose();$script:worker=$null
   Remove-Item -LiteralPath $script:jobPath,($script:jobPath+'.result.json') -Force -ErrorAction SilentlyContinue
-  foreach($c in $form.Controls){$c.Enabled=$true};$apply.Enabled=($grid.SelectedRows.Count -gt 0)
+  foreach($c in $form.Controls){$c.Enabled=$true};Update-ReviewSummary
+  if($script:operation -eq 'reconcile_apply'){$script:reviewId=$null;$apply.Enabled=$false}
  }
 })
 $form.Add_FormClosing({if($script:worker){$_.Cancel=$true;$status.Text='진행 중인 처리가 끝난 뒤 닫아 주세요.'}})
 . (Join-Path $PSScriptRoot 'theme.ps1')
 Set-UiTheme $form
 $apply.BackColor=$script:UiOrange
-# Automatic month processing is the main flow. Manual correction remains an
-# optional fallback for resolving uncertain saves without cluttering the screen.
-$manualControls=@($form.Controls|Where-Object{$_ -ne $status -and $_.Top -ge 615})
+# Monthly corrections are reviewed and edited in the grid before saving.
+$manualControls=@($form.Controls|Where-Object{$_ -ne $status -and $_ -ne $apply -and $_.Top -ge 615})
 foreach($control in $manualControls){$form.Controls.Remove($control)}
 $form.Height=770;$status.Top=620;$status.Height=95
-$toggleManual=Button '개별 정정 펼치기' 770 2 240
-$toggleManual.FlatStyle='Flat';$toggleManual.FlatAppearance.BorderSize=0
-$toggleManual.BackColor=$script:UiInk;$toggleManual.ForeColor=[Drawing.Color]::White
-$script:manualExpanded=$false
-$toggleManual.Add_Click({
- $script:manualExpanded=-not $script:manualExpanded
- if($script:manualExpanded){
-  foreach($control in $manualControls){$form.Controls.Add($control)}
-  $form.Height=880;$status.Top=764;$status.Height=65;$toggleManual.Text='개별 정정 접기'
- }else{
-  foreach($control in $manualControls){$form.Controls.Remove($control)}
-  $form.Height=770;$status.Top=620;$status.Height=95;$toggleManual.Text='개별 정정 펼치기'
- }
-})
-$status.Text='달력 저장 또는 선택 월 조회·자동 정리로 처리합니다. 완료 후 시간외근무 신청에서 해당 월을 조회하세요.'
+$apply.Location=New-Object Drawing.Point(730,620);$apply.Size=New-Object Drawing.Size(280,42)
+$apply.Text='선택 내역 정리';$apply.Enabled=$false
+$status.Width=690;$status.Text='수정 목록에서 체크를 해제하면 이번 정리에서 제외됩니다. 변경 출근·퇴근 시간을 직접 편집한 뒤 정리하세요.'
 Render-Calendar
 if($SelfTest){
- if($dayPicker.CustomFormat -ne 'yyyy-MM-dd' -or $grid.Columns.Count -ne 5){throw '정정 화면 구조 오류'}
+ $vacation.Checked=$true;$exclude.Checked=$true
+ if($vacation.Checked -or -not $exclude.Checked){throw '휴가/연장 제외 동시 선택 방지 실패'}
+ $vacation.Checked=$true
+ if($exclude.Checked -or -not $vacation.Checked){throw '휴가 우선 선택 전환 실패'}
+ $vacation.Checked=$false;$exclude.Checked=$false
+ if($dayPicker.CustomFormat -ne 'yyyy-MM-dd' -or $grid.Columns.Count -ne 9){throw '정정 화면 구조 오류'}
  $fixtureRules=('{"2026-11-02":{"vacation":true},"2026-10-29":{"exclude_overtime":true},"2026-10-01":{"vacation":false}}'|ConvertFrom-Json)
  Set-RuleRows $fixtureRules
  if($rulesGrid.Rows.Count -ne 2 -or $rulesGrid.Rows[0].Cells['date'].Value -ne '2026-10-29'){throw '저장 제외일 목록 검사 실패'}
@@ -297,6 +331,16 @@ if($SelfTest){
  if($script:chosenDates.Count -ne 2 -or $script:calendarMonth.Month -ne 11){throw '달력 다중 선택 보존 실패'}
  [void]$clearDates.GetType().GetMethod('OnClick',[Reflection.BindingFlags]'Instance,NonPublic').Invoke($clearDates,@([EventArgs]::Empty));if($script:chosenDates.Count -ne 0){throw '달력 선택 해제 실패'}
  $script:calendarMonth=[DateTime]'2026-10-01'
+ $fixtureReview=@{plan_id='ui-fixture';target_days=10;message='수정 예정 목록입니다. 변경 시간을 직접 편집할 수 있습니다.';all_rows=@(@{date='2026-10-07';checkin='08:35';checkout='19:20';eligible=$true});rows=@(@{date='2026-10-07';before=@{checkin='08:35';checkout='19:20';note='기존 비고'};after=@{checkin='09:00';checkout='18:00'};reason='연장근무 제외';status='수정 예정';selectable=$true;blocked=$false})}
+ Set-ReviewView $fixtureReview
+ if($grid.Rows.Count -ne 1 -or -not $apply.Enabled){throw '수정 목록 선택 실패'}
+ if(-not $grid.Rows[0].Cells['before_checkin'].ReadOnly -or $grid.Rows[0].Cells['checkin'].ReadOnly){throw '시간 직접 편집 구조 오류'}
+ $grid.Rows[0].Cells['checkout'].Value='잘못된 시간';Update-ReviewSummary
+ if($apply.Enabled){throw '잘못된 시간 저장 차단 실패'}
+ $grid.Rows[0].Cells['checkout'].Value='18:15';$grid.Rows[0].Cells['choose'].Value=$false;Update-ReviewSummary
+ if($apply.Enabled){throw '체크 해제 제외 실패'}
+ $grid.Rows[0].Cells['choose'].Value=$true;Update-ReviewSummary
+ if(-not $apply.Enabled){throw '편집 시간 적용 실패'}
  if($PreviewPath){Set-RuleRows $fixtureRules}
  Write-UiPreview $form $PreviewPath;Write-Output 'CORRECTIONS_UI_OK';$form.Dispose();$timer.Dispose();return
 }

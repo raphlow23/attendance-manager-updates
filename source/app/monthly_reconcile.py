@@ -6,6 +6,9 @@ recheck the row before saving, and journal uncertain results instead of retrying
 """
 import calendar
 import random
+import uuid
+import time
+import hashlib
 from datetime import date, datetime
 
 from selenium.webdriver.common.by import By
@@ -53,7 +56,48 @@ def clear_empty_holds(app, rows, today):
     return cleared
 
 
-def build_plan(rows, rules, settings, today, is_workday, rng=None):
+def resolve_holds(app, rows, today):
+    cleared = clear_empty_holds(app, rows, today)
+    with app.file_lock('state'):
+        state=app.load_json(app.STATE_FILE,{})
+        changed=False
+        for row in rows:
+            key=row['date'];rule=state.get('day_rules',{}).get(key,{})
+            if not rule.get('manual_hold') or date.fromisoformat(key)>=today:
+                continue
+            history=[e for name in ('monthly_reconcile_journal','attendance_corrections') for e in state.get(name,[]) if e.get('date')==key and e.get('status') in ('sending','checking','uncertain')]
+            entry=max(history,key=lambda e:e.get('at',''),default=None)
+            def same(a,b):
+                return all((parse_time(a[k])==parse_time(b[k]) if parse_time(a[k]) and parse_time(b[k]) else a[k]==b[k] or (is_blank_time(a[k]) and is_blank_time(b[k]))) for k in ('checkin','checkout')) and a.get('note')==b.get('note')
+            resolution=None
+            if entry and set(FIELDS)<=set(entry.get('before',{})):
+                before=entry['before'];after=dict(before,**entry.get('after',{}))
+                if same(row,after):
+                    resolution='verified_after_requery'
+                elif same(row,before):
+                    resolution='not_applied_confirmed'
+                    value=entry.get('after',{}).get('checkout')
+                    if parse_time(value):
+                        day=date.fromisoformat(key);hour,minute=parse_time(value)
+                        state.setdefault('runs',{}).setdefault(key,{}).setdefault('checkout',{})['target']=datetime.combine(day,datetime.min.time()).replace(hour=hour,minute=minute).isoformat(timespec='minutes')
+            # The user explicitly defines this rule as 09:00--18:00. It can be
+            # safely re-applied from a fresh snapshot even after a legacy hold.
+            known=all(parse_time(row[k]) or is_blank_time(row[k]) for k in ('checkin','checkout'))
+            present=any(parse_time(row[k]) for k in ('checkin','checkout'))
+            if not resolution and rule.get('exclude_overtime') and not rule.get('vacation') and known and present:
+                resolution='exclusion_rule_reconfirmed'
+            if resolution:
+                rule['manual_hold']=False
+                rule['hold_resolution']=dict(status=resolution,at=datetime.now().isoformat(timespec='seconds'))
+                if entry:
+                    entry['status']=resolution
+                changed=True;cleared.append(key)
+        if changed:
+            app.save_json(app.STATE_FILE,state)
+    return cleared
+
+
+def build_plan(rows, rules, settings, today, is_workday, rng=None, saved_targets=None):
     """Plan from completed fictional records; never create an absent workday."""
     rng = rng or random.SystemRandom()
     monthly = settings.get('monthly_overtime_hours', 10)
@@ -77,18 +121,19 @@ def build_plan(rows, rules, settings, today, is_workday, rng=None):
             continue
         if rule.get('manual_hold'):
             raise RuntimeError(f'{key}: 이전 저장 결과가 불확실해 사이트 확인이 필요합니다.')
-        if not ci or (co and ci >= co):
+        if not ci and not co:
             skipped.append(key)
             continue
         if rule.get('vacation'):
             # Explicit request: vacation records before 19:00 stay untouched.
-            if co and co >= (19, 0) and ci < (18, 0):
+            if co and co >= (19, 0) and ci and ci < (18, 0):
                 changes[key] = dict(date=key, before={k: row[k] for k in FIELDS}, after={'checkout': '18:00'}, reason='휴가일 연장 기록 정리')
             elif co and co >= (19, 0):
                 skipped.append(key)
             continue
         if rule.get('exclude_overtime'):
-            if co is None and not (day < today and is_blank_time(row['checkout'])):
+            known=all(parse_time(row[k]) or is_blank_time(row[k]) for k in ('checkin','checkout'))
+            if not known or (day==today and (ci is None or co is None)):
                 skipped.append(key)
                 continue
             after = {'checkin': '09:00', 'checkout': '18:00'}
@@ -96,9 +141,34 @@ def build_plan(rows, rules, settings, today, is_workday, rng=None):
             if changed:
                 changes[key] = dict(date=key, before={k: row[k] for k in FIELDS}, after=changed, reason='연장 제외일 09:00~18:00')
             continue
-        if co is None:
+        if not ci or (co and ci>=co):
             skipped.append(key)
             continue
+        if co is None:
+            if day>=today or not is_blank_time(row['checkout']):
+                skipped.append(key)
+                continue
+            candidate=None
+            saved=(saved_targets or {}).get(key)
+            if saved:
+                try:
+                    saved=datetime.fromisoformat(saved)
+                    if saved.date()==day and (saved.hour,saved.minute)>ci:
+                        candidate=saved.hour*60+saved.minute
+                except (ValueError,TypeError):
+                    pass
+            if candidate is None:
+                start=parse_time(settings.get('checkout_start','18:00'))
+                end=parse_time(settings.get('checkout_end','18:55'))
+                if not start or not end:
+                    raise ValueError('일반 퇴근 시간 범위를 확인하세요.')
+                choices=[m for m in range(start[0]*60+start[1],end[0]*60+end[1]+1,step) if m>ci[0]*60+ci[1] and m<19*60]
+                if not choices:
+                    skipped.append(key)
+                    continue
+                candidate=rng.choice(choices)
+            co=(candidate//60,candidate%60)
+            changes[key]=dict(date=key,before={k:row[k] for k in FIELDS},after={'checkout':f'{co[0]:02}:{co[1]:02}'},reason='퇴근 누락 보완')
         if co >= (19, 0):
             overtime.append(row)
         elif ci < (19, 0):
@@ -115,7 +185,18 @@ def build_plan(rows, rules, settings, today, is_workday, rng=None):
     needed = max(0, target - len(keep))
     selected = normal[:needed]
     for row in selected:
-        minutes = rng.choice(list(range(19*60, (19 if daily == 1 else 20)*60+56, step)))
+        minutes=None
+        saved=(saved_targets or {}).get(row['date'])
+        if saved:
+            try:
+                value=datetime.fromisoformat(saved)
+                candidate=value.hour*60+value.minute
+                if str(value.date())==row['date'] and 19*60<=candidate<=(19 if daily==1 else 20)*60+55 and candidate%(step)==0:
+                    minutes=candidate
+            except (ValueError,TypeError):
+                pass
+        if minutes is None:
+            minutes = rng.choice(list(range(19*60, (19 if daily == 1 else 20)*60+56, step)))
         changes[row['date']] = dict(date=row['date'], before={k: row[k] for k in FIELDS},
             after={'checkout': f'{minutes//60:02}:{minutes%60:02}'}, reason='월 연장일 부족 보완')
     return dict(changes=list(changes.values()), target_days=target,
@@ -157,7 +238,10 @@ def apply_plan(app, page, plan, month, background=False):
         except Exception:
             with app.file_lock('state'):
                 state = app.load_json(app.STATE_FILE, {})
-                state['monthly_reconcile_journal'][-1]['status'] = 'uncertain'
+                submitted = getattr(getattr(page,'driver',None),'_workday_write_submitted',True)
+                state['monthly_reconcile_journal'][-1]['status'] = 'not_submitted' if submitted is False else 'uncertain'
+                if submitted is False:
+                    state['day_rules'][key]['manual_hold'] = False
                 app.save_json(app.STATE_FILE, state)
             raise
         with app.file_lock('state'):
@@ -173,99 +257,167 @@ def apply_plan(app, page, plan, month, background=False):
     return completed
 
 
-def run(app, months=None, background=False):
+def _month_settings(settings, state, month):
+    result=dict(settings)
+    frozen=state.get('overtime_month_settings',{}).get(month,{})
+    if frozen:
+        result['monthly_overtime_hours']=frozen.get('monthly_hours',settings.get('monthly_overtime_hours',10))
+        result['daily_overtime_hours']=frozen.get('daily_hours',settings.get('daily_overtime_hours',1))
+    return result
+
+
+def _settings(app):
     require_site(app)
-    today = date.today()
-    months = sorted(set(months or [today.strftime('%Y-%m')]))
-    months = [m for m in months if date.fromisoformat(m+'-01') <= today]
-    if not months:
-        return {'ok': True, 'message': '미래 날짜 설정을 저장했습니다. 해당 월에 자동 처리합니다.', 'months': []}
-    settings = app.load_json(app.SETTINGS_FILE, {})
+    settings=app.load_json(app.SETTINGS_FILE,{})
     if not settings.get('id') or not settings.get('pw'):
         raise ValueError('자동관리 설정에서 계정을 먼저 저장하세요.')
     app._LOG_SECRETS.add(settings['pw'])
-    results, display_rows, warnings = [], [], []
-    with app.file_lock('action', timeout=120):
-        if background and not app.automation_enabled(app.load_json(app.SETTINGS_FILE, {})):
-            return {'ok': True, 'message': '자동관리 정지 중', 'months': []}
-        with app.file_lock('state'):
-            state = app.load_json(app.STATE_FILE, {})
-            pending = set(state.get('reconcile_pending_months', []))
-            pending.update(months)
-            state['reconcile_pending_months'] = sorted(pending)
-            app.save_json(app.STATE_FILE, state)
-        driver = app.create_driver()
+    return settings
+
+
+def _connect(app,settings):
+    driver=app.create_driver()
+    try:
+        driver.set_page_load_timeout(45);driver.get(app.SITE_URL);app.check_site_response(driver)
+        wait=WebDriverWait(driver,20)
+        wait.until(EC.visibility_of_element_located((By.NAME,'iduser'))).send_keys(settings['id'])
+        driver.find_element(By.NAME,'pass').send_keys(settings['pw'])
+        driver.find_element(By.CSS_SELECTOR,'button[type="submit"]').click()
+        wait.until(EC.element_to_be_clickable((By.LINK_TEXT,'근태관리')))
+        page=AttendancePage(driver,date.today());page.open()
+        return driver,page
+    except Exception:
+        try:app.check_site_response(driver)
+        finally:driver.quit()
+        raise
+
+
+def _read_month(page,month,today,is_workday):
+    first=date.fromisoformat(month+'-01')
+    if first>today:
+        raise ValueError('미래 월은 조회할 수 없습니다.')
+    rows=[]
+    for n in range(1,calendar.monthrange(first.year,first.month)[1]+1):
+        day=first.replace(day=n)
+        if day>today:break
+        record=page.record(day)
+        rows.append(dict(date=str(day),**{k:record[k] for k in FIELDS},eligible=is_workday(day)))
+    return rows
+
+
+def _clock(value):
+    parsed=parse_time(value)
+    return f'{parsed[0]:02}:{parsed[1]:02}' if parsed else ''
+
+
+def _signature(rule):
+    return dict(vacation=bool(rule.get('vacation')),exclude_overtime=bool(rule.get('exclude_overtime')))
+
+
+def run(app,months=None,background=False):
+    """Read and propose only. Explicit apply_reviewed is the only write path."""
+    if background:
+        return {'ok':False,'error':'월 정리는 목록 확인 후 정리 버튼으로 실행하세요.'}
+    months=months or [date.today().strftime('%Y-%m')]
+    if len(months)!=1:raise ValueError('조회할 월을 하나 선택하세요.')
+    month=months[0];today=date.today()
+    date.fromisoformat(month+'-01')
+    settings=_settings(app)
+    with app.file_lock('action',timeout=120):
+        driver,page=_connect(app,settings)
         try:
-            driver.set_page_load_timeout(45)
-            driver.get(app.SITE_URL)
-            wait = WebDriverWait(driver, 20)
-            wait.until(EC.visibility_of_element_located((By.NAME, 'iduser'))).send_keys(settings['id'])
-            driver.find_element(By.NAME, 'pass').send_keys(settings['pw'])
-            driver.find_element(By.CSS_SELECTOR, 'button[type="submit"]').click()
-            wait.until(EC.element_to_be_clickable((By.LINK_TEXT, '근태관리')))
-            if background:
-                try:
-                    app.recover_previous_days(driver)
-                except Exception as error:
-                    warnings.append('누락 퇴근 보완 확인 필요: '+str(error)[:250])
-            page = AttendancePage(driver, today)
-            page.open()
-            for month in months:
-                first = date.fromisoformat(month+'-01')
-                with app.file_lock('state'):
-                    state = app.load_json(app.STATE_FILE, {})
-                    rules = state.get('day_rules', {})
-                month_settings = dict(settings)
-                frozen = state.get('overtime_month_settings', {}).get(month, {})
-                if frozen:
-                    month_settings['monthly_overtime_hours'] = frozen.get('monthly_hours', settings.get('monthly_overtime_hours', 10))
-                    month_settings['daily_overtime_hours'] = frozen.get('daily_hours', settings.get('daily_overtime_hours', 1))
-                rows = []
-                for n in range(1, calendar.monthrange(first.year, first.month)[1]+1):
-                    day = first.replace(day=n)
-                    if day > today:
-                        break
-                    row = page.record(day)
-                    rows.append(dict(date=str(day), **{k: row[k] for k in FIELDS}))
-                cleared = clear_empty_holds(app, rows, today)
-                if cleared:
-                    with app.file_lock('state'):
-                        state = app.load_json(app.STATE_FILE, {})
-                        rules = state.get('day_rules', {})
-                plan = build_plan(rows, rules, month_settings, today, app.is_workday)
-                done = apply_plan(app, page, plan, month, background)
-                # Verify the whole resulting month, not just successful clicks.
-                final_rows = []
-                for row in rows:
-                    current = page.record(date.fromisoformat(row['date']))
-                    final_rows.append(dict(date=row['date'], **{k: current[k] for k in FIELDS}))
-                verified = build_plan(final_rows, rules, month_settings, today, app.is_workday)
-                if verified['changes']:
-                    raise RuntimeError('월 정리 후 기록이 예상과 다릅니다. 다시 조회하세요.')
-                result = dict(month=month, changed=len(done), target_days=verified['target_days'],
-                              overtime_days=verified['overtime_days'], remaining_days=verified['remaining_days'],
-                              skipped_dates=verified['skipped_dates'], empty_holds_cleared=len(cleared))
-                with app.file_lock('state'):
-                    state = app.load_json(app.STATE_FILE, {})
-                    state.setdefault('monthly_reconcile_results', {})[month] = dict(result, at=datetime.now().isoformat(timespec='seconds'))
-                    pending = set(state.get('reconcile_pending_months', [])); pending.discard(month)
-                    state['reconcile_pending_months'] = sorted(pending)
-                    app.save_json(app.STATE_FILE, state)
-                results.append(result)
-                display_rows = [dict(row, rule=state.get('day_rules', {}).get(row['date'], {}),
-                                     empty_record=is_blank_time(row['checkin']) and is_blank_time(row['checkout'])) for row in final_rows]
-                app.log_event(f'{month} 월 자동 정리: {result["changed"]}건, 연장 {result["overtime_days"]}/{result["target_days"]}일, 부족 {result["remaining_days"]}일')
-            summary = ' / '.join(f'{r["month"]} 수정 {r["changed"]}건 · 연장 {r["overtime_days"]}/{r["target_days"]}일 · 후보 부족 {r["remaining_days"]}일 · 빈 기록 보류 해제 {r["empty_holds_cleared"]}건' for r in results)
+            rows=_read_month(page,month,today,app.is_workday)
+            resolve_holds(app,rows,today)
+            with app.file_lock('state'):state=app.load_json(app.STATE_FILE,{})
+            rules=state.get('day_rules',{});effective=_month_settings(settings,state,month)
+            safe_rules={key:dict(rule,manual_hold=False) for key,rule in rules.items()}
+            targets={key:runs.get('checkout',{}).get('target') for key,runs in state.get('runs',{}).items()}
+            plan=build_plan(rows,safe_rules,effective,today,app.is_workday,saved_targets=targets)
+            entries=[];seen=set()
+            by_date={r['date']:r for r in rows}
+            for change in plan['changes']:
+                key=change['date'];seen.add(key)
+                after={k:_clock(change['before'][k]) for k in ('checkin','checkout')};after.update(change['after'])
+                held=bool(rules.get(key,{}).get('manual_hold'))
+                blocked=state.get('overtime_applications',{}).get(key,{}).get('status') in ('success','sending','uncertain')
+                entries.append(dict(change,after=after,selectable=not held and not blocked,blocked=blocked,
+                                    status='신청 이력 확인 필요' if blocked else '저장 결과 확인 필요 · 직접 검토' if held else '수정 예정'))
+            for row in rows:
+                key=row['date']
+                if key in seen or not rules.get(key,{}).get('manual_hold') or not row['eligible']:continue
+                entries.append(dict(date=key,before={k:row[k] for k in FIELDS},after={k:_clock(row[k]) for k in ('checkin','checkout')},
+                                    reason='저장 결과 재확인',selectable=False,blocked=False,status='시간 확인 후 선택'))
+            review_id=uuid.uuid4().hex
+            review=dict(id=review_id,month=month,created_at=time.time(),site=app.SITE_URL,
+                        account=hashlib.sha256(settings['id'].encode()).hexdigest(),changes=entries,rows=rows,
+                        target_days=plan['target_days'],rule_signatures={r['date']:_signature(rules.get(r['date'],{})) for r in rows})
             with app.file_lock('state'):
-                state = app.load_json(app.STATE_FILE, {})
-            pending = [key for key in state.get('repair_pending', []) if date.fromisoformat(key) < today
-                       and app.is_workday(date.fromisoformat(key)) and not state.get('day_rules', {}).get(key, {}).get('vacation')]
-            if pending:
-                warnings.append(f'누락 퇴근 보완 대기 {len(pending)}건')
-            if warnings:
-                summary += ' / ' + '; '.join(warnings)
+                state=app.load_json(app.STATE_FILE,{});state['monthly_review']=review;app.save_json(app.STATE_FILE,state)
+            return dict(ok=True,plan_id=review_id,rows=entries,all_rows=rows,target_days=plan['target_days'],
+                        message=f'수정 예정 {len(entries)}건. 날짜를 제외하거나 시간을 고친 뒤 선택 내역 정리를 누르세요.')
+        except Exception:
+            app.check_site_response(driver);raise
+        finally:driver.quit()
+
+
+def apply_reviewed(app,job):
+    settings=_settings(app)
+    with app.file_lock('action',timeout=120):
+        with app.file_lock('state'):state=app.load_json(app.STATE_FILE,{})
+        review=state.get('monthly_review') or {}
+        if review.get('id')!=job.get('plan_id') or not job.get('plan_id') or review.get('consumed'):
+            raise ValueError('처리할 조회 목록이 없습니다. 해당 월을 다시 조회하세요.')
+        if time.time()-review['created_at']>7200:
+            raise ValueError('조회 후 시간이 오래 지났습니다. 다시 조회하세요.')
+        if review['site']!=app.SITE_URL or review['account']!=hashlib.sha256(settings['id'].encode()).hexdigest():
+            raise ValueError('조회 후 대상 또는 계정이 바뀌었습니다. 다시 조회하세요.')
+        requested=job.get('rows',[])
+        if not isinstance(requested,list) or not requested or len(requested)>31:
+            raise ValueError('정리할 날짜를 선택하세요.')
+        allowed={r['date']:r for r in review['changes']};selected=[];seen=set()
+        for item in requested:
+            key=item['date']
+            if key not in allowed or key in seen:raise ValueError('조회 목록에 없거나 중복된 날짜입니다.')
+            seen.add(key);entry=allowed[key]
+            if entry.get('blocked'):raise ValueError(f'{key}: 기존 신청 이력을 먼저 확인하세요.')
+            if _signature(state.get('day_rules',{}).get(key,{}))!=review['rule_signatures'][key]:
+                raise ValueError('조회 후 달력 설정이 바뀌었습니다. 다시 조회하세요.')
+            after={k:item.get(k,'') for k in ('checkin','checkout')}
+            parsed={k:parse_time(v) for k,v in after.items()}
+            if not all(parsed.values()) or parsed['checkin']>=parsed['checkout']:
+                raise ValueError(f'{key}: 출근·퇴근을 HH:MM으로 입력하고 시간 순서를 확인하세요.')
+            if all(is_blank_time(entry['before'][k]) for k in ('checkin','checkout')):
+                raise ValueError('출퇴근이 모두 없는 날짜는 새 근무일로 만들지 않습니다.')
+            changes={k:_clock(v) for k,v in after.items() if parsed[k]!=parse_time(entry['before'][k])}
+            selected.append(dict(date=key,before=entry['before'],after=changes,reason='사용자 목록 확인 · '+entry['reason']))
+        driver,page=_connect(app,settings)
+        try:
+            # Check every selected snapshot before the first write.
+            for item in selected:
+                current=page.record(date.fromisoformat(item['date']))
+                if any(current[k]!=item['before'][k] for k in FIELDS):
+                    raise ValueError(f'{item["date"]}: 조회 후 사이트 기록이 바뀌었습니다. 다시 조회하세요.')
+            with app.file_lock('state'):
+                state=app.load_json(app.STATE_FILE,{});state['monthly_review']['consumed']=True;app.save_json(app.STATE_FILE,state)
+            changed=[item for item in selected if item['after']]
+            apply_plan(app,page,{'changes':changed},review['month'])
+            for item in selected:
+                if not item['after']:
+                    with app.file_lock('state'):
+                        state=app.load_json(app.STATE_FILE,{})
+                        state.setdefault('day_rules',{}).setdefault(item['date'],{})['manual_hold']=False
+                        day=date.fromisoformat(item['date'])
+                        for field in ('checkin','checkout'):
+                            value=parse_time(item['before'][field])
+                            if value:
+                                state.setdefault('runs',{}).setdefault(item['date'],{}).setdefault(field,{}).update(status='success',target=datetime.combine(day,datetime.min.time()).replace(hour=value[0],minute=value[1]).isoformat(timespec='minutes'),origin='목록 확인 · 기존 시간 유지')
+                        app.save_json(app.STATE_FILE,state)
+            final_rows=_read_month(page,review['month'],date.today(),app.is_workday)
             from attendance_changes import summarize_month
-            return {'ok': True, 'message': summary, 'months': results, 'rows': display_rows,
-                    'summary': summarize_month(display_rows, month_settings, app.is_workday), 'warnings': warnings}
-        finally:
-            driver.quit()
+            summary=summarize_month(final_rows,dict(settings,monthly_overtime_hours=review['target_days'],daily_overtime_hours=1),app.is_workday)
+            return dict(ok=True,rows=selected,all_rows=final_rows,target_days=review['target_days'],
+                        message=f'선택 {len(selected)}건 정리 완료 · 시간 변경 {len(changed)}건 · 연장 기록 {summary["recorded_days"]}/{review["target_days"]}일')
+        except Exception:
+            app.check_site_response(driver);raise
+        finally:driver.quit()
+

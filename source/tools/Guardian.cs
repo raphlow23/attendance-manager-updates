@@ -151,6 +151,7 @@ public static class WorkdayGuardian {
         } else {
             workerFile = Path.Combine(root, @"runtime\python.exe");
             workerArguments = "\"" + Path.Combine(root, "main.py") + "\" --resident-worker";
+            if (Array.IndexOf(args, "--show-ui") >= 0) workerArguments += " --windows-logon";
         }
         Directory.CreateDirectory(data);
         string identity = testing ? data.ToLowerInvariant() : WindowsIdentity.GetCurrent().User.Value;

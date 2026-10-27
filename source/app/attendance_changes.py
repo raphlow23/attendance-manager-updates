@@ -48,6 +48,8 @@ def save_rule(app, job):
     days = sorted({date.fromisoformat(value) for value in dates})
     if type(job.get('vacation')) is not bool or type(job.get('exclude_overtime')) is not bool:
         raise ValueError('휴가·연장 제외 여부를 확인하세요.')
+    if job['vacation'] and job['exclude_overtime']:
+        raise ValueError('휴가와 연장근무 제외는 동시에 지정할 수 없습니다.')
     with app.file_lock('action', timeout=120), app.file_lock('state'):
         state = app.load_json(app.STATE_FILE, {})
         for day in days:
@@ -110,7 +112,17 @@ def correct_reviewed(app, page, job, today):
         app.save_json(app.STATE_FILE, state)
     # Hold survives an uncertain remote result. It is cleared only by a verified
     # correction, so the background worker cannot overwrite or retry blindly.
-    page.correct(day, targets, before)
+    try:
+        page.correct(day, targets, before)
+    except Exception:
+        with app.file_lock('state'):
+            state=app.load_json(app.STATE_FILE,{})
+            submitted=getattr(getattr(page,'driver',None),'_workday_write_submitted',True)
+            state['attendance_corrections'][-1]['status']='not_submitted' if submitted is False else 'uncertain'
+            if submitted is False:
+                state['day_rules'][str(day)]['manual_hold']=False
+            app.save_json(app.STATE_FILE,state)
+        raise
     with app.file_lock('state'):
         state = app.load_json(app.STATE_FILE, {})
         state['day_rules'][str(day)]['manual_hold'] = False
@@ -128,19 +140,14 @@ def run_job(app, job):
     operation = job.get('operation')
     if operation == 'rules':
         result = save_rule(app, job)
-        from monthly_reconcile import run
-        months = sorted({str(day)[:7] for day in job.get('dates', [job.get('date')])})
-        try:
-            synced = run(app, months)
-            result['message'] = '제외일 저장 완료. ' + synced['message']
-        except Exception as error:
-            app.log_event(f'제외일 저장 후 월 자동 정리 보류: {type(error).__name__}: {error}')
-            result['message'] = '제외일은 저장했습니다. 월 자동 정리 보류: ' + str(error)[:700]
-            result['reconcile_ok'] = False
+        result['message']='설정을 저장했습니다. 사이트 반영은 선택 월 조회·자동 정리를 눌러 주세요.'
         return result
     if operation == 'reconcile':
         from monthly_reconcile import run
         return run(app, [job['month']])
+    if operation == 'reconcile_apply':
+        from monthly_reconcile import apply_reviewed
+        return apply_reviewed(app,job)
     if operation not in ('scan', 'correct'):
         raise ValueError('지원하지 않는 근태 작업입니다.')
     if operation == 'correct':
@@ -162,6 +169,7 @@ def run_job(app, job):
         try:
             driver.set_page_load_timeout(45)
             driver.get(app.SITE_URL)
+            app.check_site_response(driver)
             wait = WebDriverWait(driver, 20)
             wait.until(EC.visibility_of_element_located((By.NAME, 'iduser'))).send_keys(settings['id'])
             driver.find_element(By.NAME, 'pass').send_keys(settings['pw'])

@@ -286,11 +286,13 @@ class StateTests(unittest.TestCase):
         for bundled in (True, False):
             with patch.object(app.os.path, 'exists', return_value=bundled), \
                  patch.object(app, 'ChromeDriverManager') as manager, \
-                 patch.object(app.webdriver, 'Chrome') as chrome:
+                 patch.object(app.webdriver, 'Chrome') as chrome, \
+                 patch('site_access.reserve_session'):
                 manager.return_value.install.return_value = 'fixture-driver.exe'
                 app.create_driver()
                 service = chrome.call_args.kwargs['service']
                 self.assertEqual(service.creation_flags, app.subprocess.CREATE_NO_WINDOW)
+                self.assertIn('--headless=new',chrome.call_args.kwargs['options'].arguments)
 
     def test_driver_version_probe_is_hidden_and_cached(self):
         probe = app.QuietChromeOSManager()

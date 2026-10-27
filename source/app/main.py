@@ -248,15 +248,36 @@ class QuietChromeOSManager(OperationSystemManager):
 
 
 def create_driver():
+    from site_access import reserve_session
+    reserve_session(sys.modules[__name__])
+    options = webdriver.ChromeOptions()
+    options.add_argument('--headless=new')
+    options.add_argument('--window-size=1440,1000')
+    options.add_argument('--no-first-run')
+    options.set_capability('goog:loggingPrefs', {'performance':'ALL'})
+    def prepared(driver):
+        driver._workday_before_write = before_site_write
+        driver._workday_check_response = lambda: check_site_response(driver)
+        return driver
     if os.path.exists(DRIVER_PATH):
         try:
-            return webdriver.Chrome(service=Service(DRIVER_PATH, popen_kw={"creation_flags": subprocess.CREATE_NO_WINDOW}))
+            return prepared(webdriver.Chrome(options=options, service=Service(DRIVER_PATH, popen_kw={"creation_flags": subprocess.CREATE_NO_WINDOW})))
         except Exception as bundled_error:
             log_event(f"포함된 ChromeDriver 사용 실패, 자동 갱신 시도: {bundled_error}")
     os_manager = QuietChromeOSManager()
     cache = DriverCacheManager(os_system_manager=os_manager)
     path = ChromeDriverManager(cache_manager=cache, os_system_manager=os_manager).install()
-    return webdriver.Chrome(service=Service(path, popen_kw={"creation_flags": subprocess.CREATE_NO_WINDOW}))
+    return prepared(webdriver.Chrome(options=options, service=Service(path, popen_kw={"creation_flags": subprocess.CREATE_NO_WINDOW})))
+
+
+def before_site_write():
+    from site_access import reserve_write
+    reserve_write(sys.modules[__name__])
+
+
+def check_site_response(driver):
+    from site_access import check_page
+    check_page(sys.modules[__name__], driver)
 
 
 def recovery_target(day):
@@ -332,6 +353,7 @@ def perform_action(user_id, password, mode):
         wait = WebDriverWait(driver, 20)
         health_phase(mode, 'login_page')
         driver.get(SITE_URL)
+        check_site_response(driver)
         wait.until(EC.visibility_of_element_located((By.NAME, "iduser"))).send_keys(user_id)
         driver.find_element(By.NAME, "pass").send_keys(password)
         health_phase(mode, 'login_submit')
@@ -351,7 +373,9 @@ def perform_action(user_id, password, mode):
                 EC.element_to_be_clickable((By.CSS_SELECTOR, checkout_selector))
             )
             checkout_url = checkout_link.get_attribute("href")
+            before_site_write()
             driver.get(checkout_url)
+            check_site_response(driver)
             wait.until(
                 lambda current_driver: current_driver.execute_script(
                     "return document.readyState"
@@ -366,6 +390,7 @@ def perform_action(user_id, password, mode):
             )
             if len(confirm_controls) == 1 and confirm_controls[0].is_displayed():
                 confirm_controls[0].click()
+                check_site_response(driver)
 
             for _ in range(2):
                 try:
@@ -374,6 +399,7 @@ def perform_action(user_id, password, mode):
                     break
 
             driver.get(f"{SITE_URL}/sappd_start.php")
+            check_site_response(driver)
             wait.until(
                 lambda current_driver: current_driver.execute_script(
                     "return document.readyState"
@@ -402,6 +428,15 @@ def perform_action(user_id, password, mode):
         log_event(f"{'출근' if mode == 'checkin' else '퇴근'} 등록 동작 완료")
         return True
     except Exception as error:
+        if driver:
+            try:
+                check_site_response(driver)
+            except Exception as site_error:
+                error = site_error
+        from site_access import SiteAccessPaused
+        if HEALTH is not None and (isinstance(error,(ConnectionError,SiteAccessPaused)) or any(t in str(error).lower() for t in ('net::err_','connection refused','offline'))):
+            HEALTH.network_online=False
+            HEALTH.probe_interval=60
         log_event(f"{'출근' if mode == 'checkin' else '퇴근'} 등록 실패: {type(error).__name__}: {error}")
         return False
     finally:
@@ -525,31 +560,8 @@ def run_startup():
     checkin_ok = run_scheduled("checkin", immediate=True)
     if not checkin_ok:
         return False
-    run_monthly_reconcile()
     checkout_ok = run_scheduled("checkout")
     return checkin_ok and checkout_ok
-
-
-def run_monthly_reconcile():
-    """One bounded, serialized maintenance pass for the declared fictional site."""
-    from monthly_reconcile import run
-    with file_lock('state'):
-        state = load_json(STATE_FILE, {})
-        months = set(state.get('reconcile_pending_months', []))
-        months.add(date.today().strftime('%Y-%m'))
-    health_phase('monthly_sync', 'reconciling', 1800)
-    try:
-        result = run(sys.modules[__name__], sorted(months), background=True)
-        if result.get('warnings'):
-            health_phase('monthly_sync', 'failed', error='; '.join(result['warnings'])[:700])
-        else:
-            health_phase('monthly_sync', 'success')
-        return result
-    except Exception as error:
-        log_event(f'월 자동 정리 보류: {type(error).__name__}: {error}')
-        health_phase('monthly_sync', 'failed', error=str(error)[:700])
-        return {'ok': False, 'error': str(error)[:700]}
-
 
 
 def register_tasks():

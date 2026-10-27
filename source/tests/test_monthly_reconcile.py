@@ -10,7 +10,6 @@ sys.path[:0] = [str(Path(__file__).resolve().parents[1] / 'app')]
 import main as app
 import attendance_changes as changes
 import monthly_reconcile as monthly
-from resident import MonthlyPass
 import test_attendance as fixtures
 
 
@@ -43,21 +42,7 @@ class MemoryPage:
 
 
 class PlannerTests(unittest.TestCase):
-    def test_daily_pass_is_bounded_and_checkout_can_trigger_second_pass(self):
-        state = MonthlyPass()
-        day = date(2026, 10, 27)
-        self.assertTrue(state.ready(day, 'checkin', 0))
-        state.begin(0);state.result={'ok':False}
-        self.assertFalse(state.ready(day, 'checkin', 59))
-        self.assertTrue(state.ready(day, 'checkin', 60))
-        state.begin(60);state.result={'ok':False}
-        self.assertTrue(state.ready(day, 'checkin', 120))
-        state.begin(120);state.result={'ok':False}
-        self.assertFalse(state.ready(day, 'checkin', 180))
-        self.assertTrue(state.ready(day, 'checkout', 181))
-        state.begin(181);state.result={'ok':True}
-        self.assertFalse(state.ready(day, 'checkout', 300))
-        self.assertTrue(state.ready(date(2026, 10, 28), 'checkin', 301))
+
 
     def workday(self, day):
         return day.weekday() < 5 and day != date(2026, 10, 9)
@@ -99,6 +84,11 @@ class PlannerTests(unittest.TestCase):
         plan = self.plan([row('2026-10-02', ':')], {'2026-10-02': {'exclude_overtime': True}})
         self.assertEqual(plan['changes'][0]['after'], {'checkin': '09:00', 'checkout': '18:00'})
 
+    def test_missing_regular_checkout_reuses_saved_time(self):
+        key='2026-10-13'
+        plan=monthly.build_plan([row(key,':')],{}, {'monthly_overtime_hours':0},date(2026,10,27),lambda d:True,saved_targets={key:'2026-10-13T18:40'})
+        self.assertEqual(plan['changes'][0]['after'],{'checkout':'18:40'})
+
     def test_missing_today_checkout_and_unknown_time_are_not_filled(self):
         rows = [row('2026-10-27', ':'), row('2026-10-02', '확인중'), row('2026-10-06', ':', ':')]
         rules = {r['date']: {'exclude_overtime': True} for r in rows}
@@ -112,8 +102,8 @@ class PlannerTests(unittest.TestCase):
 
     def test_not_enough_completed_days_does_not_create_absent_records(self):
         plan = self.plan([row('2026-10-01'), row('2026-10-02', ':'), row('2026-10-06', ':', ':')])
-        self.assertEqual(len(plan['changes']), 1)
-        self.assertEqual(plan['remaining_days'], 9)
+        self.assertEqual(len(plan['changes']), 2)
+        self.assertEqual(plan['remaining_days'], 8)
 
     def test_existing_overtime_kept_and_excess_reduced(self):
         plan = self.plan([row(f'2026-10-{d:02}', '19:35') for d in (1, 2, 6)], settings={'monthly_overtime_hours': 2})
@@ -133,6 +123,43 @@ class PlannerTests(unittest.TestCase):
 class ApplyTests(unittest.TestCase):
     setUp = fixtures.StateTests.setUp
     tearDown = fixtures.StateTests.tearDown
+
+    def test_exclusion_reconfirms_orphan_hold_and_overrides_other_times(self):
+        key='2026-10-07'
+        rows=[row(key,'17:25','09:35')]
+        app.save_json(app.STATE_FILE,{'day_rules':{key:{'manual_hold':True,'exclude_overtime':True}}})
+        self.assertEqual(monthly.resolve_holds(app,rows,date(2026,10,27)),[key])
+        state=app.load_json(app.STATE_FILE,{})
+        plan=monthly.build_plan(rows,state['day_rules'],{},date(2026,10,27),lambda d:True)
+        self.assertEqual(plan['changes'][0]['after'],{'checkin':'09:00','checkout':'18:00'})
+
+    def test_verified_after_requery_hold_is_resolved_without_site_write(self):
+        key='2026-10-07';before=row(key,'19:35')
+        app.save_json(app.STATE_FILE,{'day_rules':{key:{'manual_hold':True}},'monthly_reconcile_journal':[dict(date=key,before=before,after={'checkout':'18:00'},status='uncertain')]})
+        self.assertEqual(monthly.resolve_holds(app,[row(key,'18:00')],date(2026,10,27)),[key])
+        self.assertEqual(app.load_json(app.STATE_FILE,{})['monthly_reconcile_journal'][0]['status'],'verified_after_requery')
+
+    def test_unapplied_goal_is_retained_for_retry(self):
+        key='2026-10-07';before=row(key)
+        app.save_json(app.STATE_FILE,{'day_rules':{key:{'manual_hold':True}},'monthly_reconcile_journal':[dict(date=key,before=before,after={'checkout':'19:45'},status='uncertain')]})
+        monthly.resolve_holds(app,[before],date(2026,10,27))
+        state=app.load_json(app.STATE_FILE,{})
+        targets={key:state['runs'][key]['checkout']['target']}
+        plan=monthly.build_plan([before],state['day_rules'],{},date(2026,10,27),lambda d:True,saved_targets=targets)
+        self.assertEqual(plan['changes'][0]['after']['checkout'],'19:45')
+
+    def test_mutually_exclusive_rule_is_rejected_without_write(self):
+        app.save_json(app.STATE_FILE,{'day_rules':{}})
+        with self.assertRaises(ValueError):
+            changes.save_rule(app,dict(date='2026-10-07',vacation=True,exclude_overtime=True))
+        self.assertEqual(app.load_json(app.STATE_FILE,{}),{'day_rules':{}})
+
+    def test_preview_never_saves_even_when_edit_form_would_fail(self):
+        page=MemoryPage([row(f'2026-09-{d:02}') for d in range(1,31)],fail=True)
+        with patch.object(app,'create_driver'),patch.object(monthly,'WebDriverWait'),patch.object(monthly,'AttendancePage',return_value=page):
+            result=monthly.run(app,['2026-09'])
+        self.assertTrue(result['ok']);self.assertTrue(result['rows']);self.assertEqual(len(result['all_rows']),30)
+        self.assertEqual(page.saved,[])
 
     def test_empty_past_hold_is_cleared_without_creating_a_workday(self):
         key='2026-10-01'
@@ -155,45 +182,73 @@ class ApplyTests(unittest.TestCase):
         self.assertEqual(monthly.clear_empty_holds(app,rows,date(2026,10,27)),[])
         self.assertTrue(all(r['manual_hold'] for r in app.load_json(app.STATE_FILE,{})['day_rules'].values()))
 
-    def test_startup_runs_checkin_then_month_sync_then_checkout(self):
-        calls = []
-        def scheduled(mode, **kw):
-            calls.append(mode)
-            return True
-        with patch.object(app, 'choose_target'), patch.object(app, 'run_scheduled', side_effect=scheduled), patch.object(app, 'run_monthly_reconcile', side_effect=lambda: calls.append('monthly')):
+    def test_startup_runs_only_checkin_then_checkout(self):
+        calls=[]
+        def scheduled(mode,**kw):
+            calls.append(mode);return True
+        with patch.object(app,'choose_target'),patch.object(app,'run_scheduled',side_effect=scheduled):
             self.assertTrue(app.run_startup())
-        self.assertEqual(calls, ['checkin', 'monthly', 'checkout'])
+        self.assertEqual(calls,['checkin','checkout'])
 
-    def test_failed_startup_checkin_does_not_checkout_or_mutate_month(self):
-        with patch.object(app, 'choose_target'), patch.object(app, 'run_scheduled', return_value=False) as scheduled, patch.object(app, 'run_monthly_reconcile') as sync:
+    def test_failed_startup_checkin_does_not_checkout(self):
+        with patch.object(app,'choose_target'),patch.object(app,'run_scheduled',return_value=False) as scheduled:
             self.assertFalse(app.run_startup())
-        scheduled.assert_called_once_with('checkin', immediate=True)
-        sync.assert_not_called()
+        scheduled.assert_called_once_with('checkin',immediate=True)
 
-    def test_full_month_run_verifies_server_rows_and_second_pass_is_noop(self):
-        rows = [row(f'2026-09-{day:02}') for day in range(1, 31)]
-        page = MemoryPage(rows)
-        app.save_json(app.SETTINGS_FILE, {'id': 'fixture', 'pw': 'fixture', 'monthly_overtime_hours': 10})
-        app.save_json(app.STATE_FILE, {'day_rules': {'2026-09-01': {'exclude_overtime': True}}, 'reconcile_pending_months': ['2026-09'],
-                                      'overtime_month_settings': {'2026-09': {'monthly_hours': 4, 'daily_hours': 2}}})
-        driver = Mock()
-        with patch.object(app, 'create_driver', return_value=driver), patch.object(monthly, 'WebDriverWait'), patch.object(monthly, 'AttendancePage', return_value=page):
-            first = monthly.run(app, ['2026-09'])
-            second = monthly.run(app, ['2026-09'])
-        self.assertEqual(first['months'][0]['changed'], 3)
-        self.assertEqual(second['months'][0]['changed'], 0)
-        self.assertEqual(second['summary']['recorded_days'], 2)
-        self.assertEqual(second['summary']['target_days'], 2)
-        self.assertEqual(driver.quit.call_count, 2)
-        self.assertEqual(app.load_json(app.STATE_FILE, {})['reconcile_pending_months'], [])
+    def test_preview_then_apply_all_and_second_preview_is_noop(self):
+        rows=[row(f'2026-09-{d:02}') for d in range(1,31)];page=MemoryPage(rows)
+        app.save_json(app.SETTINGS_FILE,{'id':'fixture','pw':'fixture','monthly_overtime_hours':10})
+        app.save_json(app.STATE_FILE,{'day_rules':{'2026-09-01':{'exclude_overtime':True}},'overtime_month_settings':{'2026-09':{'monthly_hours':4,'daily_hours':2}}})
+        driver=Mock()
+        with patch.object(app,'create_driver',return_value=driver),patch.object(monthly,'WebDriverWait'),patch.object(monthly,'AttendancePage',return_value=page):
+            first=monthly.run(app,['2026-09'])
+            self.assertEqual(page.saved,[])
+            requested=[dict(date=e['date'],**e['after']) for e in first['rows'] if e['selectable']]
+            result=monthly.apply_reviewed(app,{'plan_id':first['plan_id'],'rows':requested})
+            second=monthly.run(app,['2026-09'])
+        self.assertTrue(result['ok']);self.assertEqual(len(page.saved),3)
+        self.assertEqual(second['rows'],[]);self.assertEqual(first['target_days'],2)
+        self.assertEqual(driver.quit.call_count,3)
 
-    def test_background_recovery_error_is_not_reported_as_all_success(self):
-        page = MemoryPage([row(f'2026-09-{day:02}') for day in range(1,31)])
-        app.save_json(app.SETTINGS_FILE, {'id': 'fixture', 'pw': 'fixture', 'monthly_overtime_hours': 0})
-        with patch.object(app, 'create_driver'), patch.object(monthly, 'WebDriverWait'), patch.object(monthly, 'AttendancePage', return_value=page), patch.object(app, 'recover_previous_days', side_effect=RuntimeError('fixture recovery error')):
-            result = monthly.run(app, ['2026-09'], background=True)
-        self.assertTrue(result['warnings'])
-        self.assertIn('누락 퇴근 보완 확인 필요', result['message'])
+    def test_user_can_uncheck_a_date_and_edit_proposed_time(self):
+        page=MemoryPage([row(f'2026-09-{d:02}') for d in range(1,31)])
+        app.save_json(app.SETTINGS_FILE,{'id':'fixture','pw':'fixture','monthly_overtime_hours':2})
+        with patch.object(app,'create_driver'),patch.object(monthly,'WebDriverWait'),patch.object(monthly,'AttendancePage',return_value=page):
+            preview=monthly.run(app,['2026-09'])
+            selected=preview['rows'][0]
+            monthly.apply_reviewed(app,{'plan_id':preview['plan_id'],'rows':[dict(date=selected['date'],checkin='09:15',checkout='19:35')]})
+            with self.assertRaises(ValueError):
+                monthly.apply_reviewed(app,{'plan_id':preview['plan_id'],'rows':[dict(date=selected['date'],checkin='09:15',checkout='19:35')]})
+        self.assertEqual(page.saved,[selected['date']])
+        self.assertEqual(page.rows[selected['date']]['checkin'],'09:15')
+        self.assertEqual(page.rows[selected['date']]['checkout'],'19:35')
+
+    def test_background_month_processing_is_disabled(self):
+        with patch.object(app,'create_driver') as driver:
+            result=monthly.run(app,['2026-09'],background=True)
+        self.assertFalse(result['ok']);driver.assert_not_called()
+
+    def test_review_rejects_changed_calendar_before_connecting(self):
+        page=MemoryPage([row(f'2026-09-{d:02}') for d in range(1,31)])
+        with patch.object(app,'create_driver') as driver,patch.object(monthly,'WebDriverWait'),patch.object(monthly,'AttendancePage',return_value=page):
+            preview=monthly.run(app,['2026-09']);entry=preview['rows'][0]
+            state=app.load_json(app.STATE_FILE,{})
+            state.setdefault('day_rules',{})[entry['date']]={'vacation':True}
+            app.save_json(app.STATE_FILE,state)
+            with self.assertRaisesRegex(ValueError,'달력 설정'):
+                monthly.apply_reviewed(app,{'plan_id':preview['plan_id'],'rows':[dict(date=entry['date'],**entry['after'])]})
+            self.assertEqual(driver.call_count,1)
+        self.assertEqual(page.saved,[])
+
+    def test_review_rechecks_site_before_any_write(self):
+        page=MemoryPage([row(f'2026-09-{d:02}') for d in range(1,31)])
+        with patch.object(app,'create_driver'),patch.object(monthly,'WebDriverWait'),patch.object(monthly,'AttendancePage',return_value=page):
+            preview=monthly.run(app,['2026-09'])
+            entries=preview['rows'][:2]
+            page.rows[entries[-1]['date']]['note']='외부 수정'
+            with self.assertRaisesRegex(ValueError,'기록이 바뀌었습니다'):
+                monthly.apply_reviewed(app,{'plan_id':preview['plan_id'],'rows':[dict(date=e['date'],**e['after']) for e in entries]})
+        self.assertEqual(page.saved,[])
 
     def test_repeated_reconcile_is_idempotent_and_preserves_notes(self):
         rows = [row('2026-10-01'), row('2026-10-02'), row('2026-10-06')]
@@ -218,6 +273,16 @@ class ApplyTests(unittest.TestCase):
         self.assertTrue(state['day_rules']['2026-10-01']['manual_hold'])
         self.assertEqual(state['monthly_reconcile_journal'][0]['status'], 'uncertain')
 
+    def test_failure_before_submit_does_not_create_site_confirmation_hold(self):
+        rows=[row('2026-10-01')]
+        page=MemoryPage(rows,fail=True)
+        page.driver=Mock(_workday_write_submitted=False)
+        plan=monthly.build_plan(rows,{}, {},date(2026,10,27),lambda d:True)
+        with self.assertRaises(RuntimeError):monthly.apply_plan(app,page,plan,'2026-10')
+        state=app.load_json(app.STATE_FILE,{})
+        self.assertFalse(state['day_rules']['2026-10-01']['manual_hold'])
+        self.assertEqual(state['monthly_reconcile_journal'][0]['status'],'not_submitted')
+
     def test_preflight_conflict_prevents_all_writes(self):
         rows = [row('2026-10-01'), row('2026-10-02')]
         plan = monthly.build_plan(rows, {}, {}, date(2026, 10, 27), lambda d: True)
@@ -236,15 +301,12 @@ class ApplyTests(unittest.TestCase):
             monthly.apply_plan(app, page, plan, '2026-10')
         self.assertEqual(page.saved, [])
 
-    def test_rule_save_is_preserved_when_remote_reconcile_fails(self):
-        job = dict(operation='rules', dates=['2026-10-01'], vacation=False, exclude_overtime=True)
-        with patch.object(monthly, 'run', side_effect=RuntimeError('fixture offline')):
-            result = changes.run_job(app, job)
-        self.assertTrue(result['ok'])
-        self.assertFalse(result['reconcile_ok'])
-        state = app.load_json(app.STATE_FILE, {})
-        self.assertIn('2026-10', state['reconcile_pending_months'])
-        self.assertTrue(state['day_rules']['2026-10-01']['exclude_overtime'])
+    def test_rule_save_never_connects_or_starts_month_processing(self):
+        job=dict(operation='rules',dates=['2026-10-01'],vacation=False,exclude_overtime=True)
+        with patch.object(monthly,'run') as sync,patch.object(app,'create_driver') as driver:
+            result=changes.run_job(app,job)
+        self.assertTrue(result['ok']);sync.assert_not_called();driver.assert_not_called()
+        self.assertTrue(app.load_json(app.STATE_FILE,{})['day_rules']['2026-10-01']['exclude_overtime'])
 
 
 if __name__ == '__main__':
