@@ -89,6 +89,8 @@ try:
     review=trips.run_job(app,dict(operation='scan',month='2026-10',total=30000))
     chosen=[]
     for row in review['rows']:chosen.append(dict(date=row['date'],selected=True,hours=4 if row['mandatory'] else 2,start_hour=9,location='장소 '+row['date'],purpose='직접  입력한 출장 목적'))
+    review=trips.run_job(app,dict(operation='inspect',review_id=review['review_id'],total=30000,rows=chosen))
+    assert review['ready']
     result=trips.run_job(app,dict(operation='submit',review_id=review['review_id'],total=30000,rows=chosen))
     assert result['ok'] and result['summary']['remaining_amount']==0
     assert posts==[('trip','2026-10-07'),('trip','2026-10-13')]

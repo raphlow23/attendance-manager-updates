@@ -19,7 +19,7 @@ foreach($label in (Get-WorkdayMonthLabels (Get-Date))){[void]$month.Items.Add($l
 $total=New-Object Windows.Forms.NumericUpDown;$total.Location=New-Object Drawing.Point(360,61);$total.Width=145;$total.Maximum=1000;$total.Increment=1;$total.ThousandsSeparator=$true;$form.Controls.Add($total)
 [void](Text-Label '만원 · 예: 20 = 20만원' 515 65 295)
 $scan=Make-Button '출퇴근 일정 조회' 855 55 355
-$note=Text-Label '구분: 센터 / 이동: 대중교통 · 연장 제외일: 09~18시, 인정 4시간·2만원 · 기존 등록은 중복 제외' 20 110 1190
+$note=Text-Label '구분: 센터 / 이동: 대중교통 · 연장 제외일: 09~18시, 인정 4시간·2만원 · 기존 등록은 선택 완료 시 확인·중복 제외' 20 110 1190
 $grid=New-Object Windows.Forms.DataGridView;$grid.Location=New-Object Drawing.Point(20,155);$grid.Size=New-Object Drawing.Size(1190,370);$grid.Anchor='Top,Bottom,Left,Right'
 $grid.AllowUserToAddRows=$false;$grid.AllowUserToDeleteRows=$false;$grid.RowHeadersVisible=$false;$grid.AutoSizeColumnsMode='Fill';$grid.RowTemplate.Height=32
 $check=New-Object Windows.Forms.DataGridViewCheckBoxColumn;$check.Name='selected';$check.HeaderText='선택';$check.FillWeight=40;[void]$grid.Columns.Add($check)
@@ -30,7 +30,7 @@ $grid.Columns['location'].Visible=$false;$grid.Columns['purpose'].Visible=$false
 $summary=Text-Label '목표 금액을 입력하고 출퇴근 일정을 조회하세요.' 20 540 1190;$summary.Height=58;$summary.Anchor='Bottom,Left,Right'
 $status=Text-Label '설정을 저장하거나 메뉴를 여는 것만으로 사이트에 접속하지 않습니다.' 20 650 1190;$status.Height=45;$status.Anchor='Bottom,Left,Right'
 $allocate=Make-Button '선택일 시간 배분' 20 600 230;$allocate.Anchor='Bottom,Left'
-$complete=Make-Button '선택 완료 → 장소·목적 입력' 270 600 330;$complete.Anchor='Bottom,Left'
+$complete=Make-Button '선택 완료 → 기존 출장 확인' 270 600 330;$complete.Anchor='Bottom,Left'
 $back=Make-Button '일정 다시 선택' 20 600 230;$back.Anchor='Bottom,Left';$back.Visible=$false
 $submit=Make-Button '선택 날짜 순서대로 등록' 855 600 355;$submit.Anchor='Bottom,Right';$submit.Visible=$false
 $timer=New-Object Windows.Forms.Timer;$timer.Interval=400
@@ -95,11 +95,11 @@ function Start-TripJob($job){
  [IO.File]::WriteAllText($script:jobPath,($job|ConvertTo-Json -Depth 10),(New-Object Text.UTF8Encoding($false)))
  $script:worker=Start-WorkdayHiddenProcess $python "`"$(Join-Path $PSScriptRoot 'main.py')`" --trip-job `"$script:jobPath`"" $PSScriptRoot
  foreach($c in $form.Controls){if($c -ne $status){$c.Enabled=$false}}
- $status.Text=if($job.operation -eq 'allocate'){'선택한 날짜 안에서 시간을 배분 중입니다. 사이트에는 접속하지 않습니다.'}else{'사이트 처리 중입니다. 등록은 하루씩 확인한 뒤 다음 날짜로 진행합니다.'};$timer.Start()
+ $status.Text=if($job.operation -eq 'allocate'){'선택한 날짜 안에서 시간을 배분 중입니다. 사이트에는 접속하지 않습니다.'}elseif($job.operation -eq 'scan'){'근태관리에서 출퇴근 등록 날짜를 조회 중입니다.'}elseif($job.operation -eq 'inspect'){'선택 완료: 기존 출장 내역을 확인 중입니다. 아직 등록하지 않습니다.'}else{'사이트 처리 중입니다. 등록은 하루씩 확인한 뒤 다음 날짜로 진행합니다.'};$timer.Start()
 }
 $scan.Add_Click({try{$script:reviewId=$null;Start-TripJob @{operation='scan';month=(Selected-Month);total=(Target-Amount)}}catch{$status.Text=$_.Exception.Message}})
 $allocate.Add_Click({try{[void]$grid.EndEdit();Start-TripJob @{operation='allocate';review_id=$script:reviewId;total=(Target-Amount);rows=@(Entries)}}catch{$status.Text=$_.Exception.Message}})
-$complete.Add_Click({[void]$grid.EndEdit();Update-Totals;if($complete.Enabled){Change-Stage 2}})
+$complete.Add_Click({try{[void]$grid.EndEdit();Update-Totals;if($complete.Enabled){Start-TripJob @{operation='inspect';review_id=$script:reviewId;total=(Target-Amount);rows=@(Entries)}}}catch{$status.Text=$_.Exception.Message}})
 $back.Add_Click({[void]$grid.EndEdit();Update-Totals;Change-Stage 1})
 $submit.Add_Click({try{[void]$grid.EndEdit();Update-Totals;if($submit.Enabled){Start-TripJob @{operation='submit';review_id=$script:reviewId;total=(Target-Amount);rows=@(Entries)}}}catch{$status.Text=$_.Exception.Message}})
 $total.Add_ValueChanged({Update-Totals})
@@ -131,11 +131,11 @@ $timer.Add_Tick({
    $script:reviewId=$null
    if($result.all_rows){$script:allRows=@($result.all_rows);Change-Stage 1}
    elseif($result.rows){foreach($entry in $result.rows){$entry.selected=$false;$entry.blocked=$true};$script:allRows=@($result.rows);Render-Rows $result.rows}
-  }elseif($result.ok){$script:reviewId=$result.review_id;$script:allRows=@($result.rows);Change-Stage 1}
+  }elseif($result.ok){$script:reviewId=$result.review_id;$script:allRows=@($result.rows);if($script:operation -eq 'inspect' -and $result.ready){Change-Stage 2}else{Change-Stage 1}}
   if(-not $result.ok){throw $result.error}
   $status.Text=$result.message
   if($script:operation -eq 'submit'){[void][Windows.Forms.MessageBox]::Show($form,$result.message,'출장 등록 결과','OK','Information')}
- }catch{$status.Text='처리 확인 필요: '+$_.Exception.Message;$script:reviewId=$null;[void][Windows.Forms.MessageBox]::Show($form,$status.Text,'출장 처리 결과','OK','Error')}
+ }catch{$status.Text='처리 확인 필요: '+$_.Exception.Message;if($script:operation -ne 'inspect'){$script:reviewId=$null};$errorTitle=if($script:operation -eq 'scan'){'근태 일정 조회 오류'}elseif($script:operation -eq 'inspect'){'기존 출장 확인 오류'}else{'출장 처리 결과'};[void][Windows.Forms.MessageBox]::Show($form,$status.Text,$errorTitle,'OK','Error')}
  finally{
   $script:worker.Dispose();$script:worker=$null;Remove-Item -LiteralPath $script:jobPath,($script:jobPath+'.result.json') -Force -ErrorAction SilentlyContinue
   foreach($c in $form.Controls){$c.Enabled=$true};$grid.Enabled=[bool]$script:reviewId;$total.Enabled=($script:stage -eq 1);$month.Enabled=($script:stage -eq 1);Update-Totals
