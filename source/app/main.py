@@ -533,42 +533,53 @@ def register_tasks():
     validate_overtime_capacity(config, date.today())
     start_in, _, start_out, _, _ = time_settings(config)
     guardian = os.path.join(SOURCE_DIR, 'WorkdayGuard.exe').replace("'", "''")
-    commands = ["$ErrorActionPreference='Stop'"]
+    commands = ["$ErrorActionPreference='Stop'", "[Console]::OutputEncoding=New-Object Text.UTF8Encoding($false)"]
 
     definitions = [("자동출근", f"{start_in // 60:02}:{start_in % 60:02}"), ("자동퇴근", f"{start_out // 60:02}:{start_out % 60:02}")]
     for task_name, start_time in definitions:
         command = (
             f"$action=New-ScheduledTaskAction -Execute '{guardian}'; "
             f"$trigger=New-ScheduledTaskTrigger -Weekly -DaysOfWeek {WEEKDAYS} -At '{start_time}'; "
-            "$user=[Security.Principal.WindowsIdentity]::GetCurrent().Name; "
+            "$user=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value; "
             "$principal=New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited; "
             "$settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries; "
             f"Register-ScheduledTask -TaskName '{task_name}' -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null"
         )
-        commands.append(command)
+        commands.append(f"$stage='{task_name}'; " + command)
 
     # AtLogOn runs as the installing user: the browser needs an interactive session.
     command = (
-        "$user=[Security.Principal.WindowsIdentity]::GetCurrent().Name; "
+        "$user=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value; "
         f"$action=New-ScheduledTaskAction -Execute '{guardian}' -Argument '--show-ui'; "
         "$trigger=New-ScheduledTaskTrigger -AtLogOn -User $user; $trigger.Delay='PT30S'; "
         "$principal=New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited; "
         "$settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries; "
         "Register-ScheduledTask -TaskName '자동출퇴근로그인' -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null"
     )
-    commands.append(command)
+    commands.append("$stage='자동출퇴근로그인'; " + command)
     command = (
-        "$user=[Security.Principal.WindowsIdentity]::GetCurrent().Name; "
+        "$user=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value; "
         f"$action=New-ScheduledTaskAction -Execute '{guardian}' -Argument '--watchdog'; "
         "$triggers=@((New-ScheduledTaskTrigger -AtLogOn -User $user),(New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5))); "
         "$principal=New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited; "
         "$settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 2) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries; "
         "Register-ScheduledTask -TaskName '자동출퇴근점검' -Action $action -Trigger $triggers -Settings $settings -Principal $principal -Force | Out-Null"
     )
-    subprocess.run(
-        ["powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", '; '.join(commands + [command])],
-        check=True, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW,
-    )
+    commands.append("$stage='자동출퇴근점검'; " + command)
+    script = "try { " + '; '.join(commands) + " } catch { [Console]::Error.WriteLine(('예약 등록 실패 [{0}]: {1}' -f $stage,$_.Exception.Message)); exit 1 }"
+    encoded = base64.b64encode(script.encode('utf-16-le')).decode('ascii')
+    try:
+        result = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", encoded],
+            check=False, capture_output=True, encoding='utf-8', errors='replace',
+            timeout=90, creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError('예약 작업 등록 응답이 90초 동안 없습니다. 작업 스케줄러 서비스를 확인하세요.') from error
+    if result.returncode:
+        detail = (result.stderr or result.stdout or f'종료 코드 {result.returncode}').strip()
+        log_event('예약 작업 등록 오류: ' + detail)
+        raise RuntimeError(detail[:900] + '\nWindows 작업 스케줄러 서비스와 현재 계정의 등록 권한을 확인하세요. 상세 원인은 실행 로그에 기록했습니다.')
 
 
 def main():

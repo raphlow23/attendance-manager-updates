@@ -19,6 +19,7 @@ function Start-WorkdayHiddenProcess([string]$FileName, [string]$Arguments = '', 
     $process.StartInfo.UseShellExecute = $false
     $process.StartInfo.CreateNoWindow = $true
     $process.StartInfo.RedirectStandardError = [bool]$CaptureError
+    if ($CaptureError) { $process.StartInfo.StandardErrorEncoding = New-Object Text.UTF8Encoding($false) }
     if (-not $process.Start()) { $process.Dispose(); throw '작업을 시작하지 못했습니다.' }
     return $process
 }

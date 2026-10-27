@@ -10,7 +10,7 @@ using System.Threading;
 using System.Windows.Forms;
 [assembly: AssemblyTitle("근태매니저 설치")]
 [assembly: AssemblyProduct("근태매니저")]
-[assembly: AssemblyVersion("1.17.0.0")]
+[assembly: AssemblyVersion("1.18.0.0")]
 
 public static class AttendanceSetup {
     const string ExpectedHash = "__PAYLOAD_SHA256__";

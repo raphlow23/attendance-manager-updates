@@ -19,22 +19,48 @@ def blocked(state, day):
     return bool(rule.get('vacation') or rule.get('manual_hold'))
 
 
+def summarize_month(rows, settings, is_workday):
+    """Report existing site records only; never assign replacement overtime."""
+    hours = settings.get('monthly_overtime_hours', 10)
+    daily = settings.get('daily_overtime_hours', 1)
+    if type(hours) is not int or type(daily) is not int or hours < 0 or daily not in (1, 2) or hours % daily:
+        raise ValueError('월 연장시간과 하루 기준 설정을 확인하세요.')
+    target = hours // daily
+    recorded = []
+    flagged = []
+    for row in rows:
+        checkin, checkout = parse_time(row['checkin']), parse_time(row['checkout'])
+        if (is_workday(date.fromisoformat(row['date'])) and checkin and checkout
+                and checkin < checkout and checkout >= (19, 0)):
+            recorded.append(row['date'])
+            rule = row.get('rule', {})
+            if rule.get('vacation') or rule.get('exclude_overtime'):
+                flagged.append(row['date'])
+    return dict(recorded_days=len(recorded), target_days=target,
+                remaining_days=max(0, target-len(recorded)),
+                excess_days=max(0, len(recorded)-target), excluded_record_days=len(flagged))
+
+
 def save_rule(app, job):
-    day = date.fromisoformat(job['date'])
+    dates = job.get('dates', [job.get('date')])
+    if not isinstance(dates, list) or not dates or len(dates) > 366:
+        raise ValueError('저장할 날짜를 1~366개 선택하세요.')
+    days = sorted({date.fromisoformat(value) for value in dates})
     if type(job.get('vacation')) is not bool or type(job.get('exclude_overtime')) is not bool:
         raise ValueError('휴가·연장 제외 여부를 확인하세요.')
     with app.file_lock('action', timeout=120), app.file_lock('state'):
         state = app.load_json(app.STATE_FILE, {})
-        rule = state.setdefault('day_rules', {}).setdefault(str(day), {})
-        rule.update(vacation=job['vacation'], exclude_overtime=job['exclude_overtime'],
-                    updated_at=datetime.now().isoformat(timespec='seconds'))
-        # Cancel only a pending target. Never erase a successful/uncertain run.
-        run = state.get('runs', {}).get(str(day), {}).get('checkout', {})
-        if job['exclude_overtime'] and run.get('status') not in ('success', 'in_progress', 'uncertain'):
-            run.pop('target', None)
+        for day in days:
+            rule = state.setdefault('day_rules', {}).setdefault(str(day), {})
+            rule.update(vacation=job['vacation'], exclude_overtime=job['exclude_overtime'],
+                        updated_at=datetime.now().isoformat(timespec='seconds'))
+            # Cancel only a pending target. Never erase a successful/uncertain run.
+            run = state.get('runs', {}).get(str(day), {}).get('checkout', {})
+            if job['exclude_overtime'] and run.get('status') not in ('success', 'in_progress', 'uncertain'):
+                run.pop('target', None)
         app.save_json(app.STATE_FILE, state)
-    app.log_event(f'{day} 휴가={job["vacation"]}, 연장 제외={job["exclude_overtime"]} 저장')
-    return {'ok': True, 'message': '제외일을 저장했습니다. 기존 사이트 기록은 바뀌지 않습니다.'}
+    app.log_event(f'제외일 {len(days)}개 휴가={job["vacation"]}, 연장 제외={job["exclude_overtime"]} 저장')
+    return {'ok': True, 'message': f'선택 날짜 {len(days)}개의 제외 설정을 저장했습니다. 기존 사이트 기록은 바뀌지 않습니다.'}
 
 
 def reviewed_targets(job, today):
@@ -139,6 +165,6 @@ def run_job(app, job):
                 record = page.record(day)
                 rows.append(dict(date=str(day), **{k: record[k] for k in ('checkin', 'checkout', 'note')},
                                  rule=rule_for(state, day)))
-            return {'ok': True, 'rows': rows}
+            return {'ok': True, 'rows': rows, 'summary': summarize_month(rows, settings, app.is_workday)}
         finally:
             driver.quit()

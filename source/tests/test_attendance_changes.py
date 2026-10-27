@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'app'))
-from attendance_changes import blocked, correct_reviewed, reviewed_targets, save_rule
+from attendance_changes import blocked, correct_reviewed, reviewed_targets, save_rule, summarize_month
 from attendance_recovery import AttendancePage
 import test_attendance as fixtures
 from test_edit_form import FakeSite
@@ -42,6 +42,36 @@ class ChangesTests(unittest.TestCase):
 class RulesTests(unittest.TestCase):
     setUp = fixtures.StateTests.setUp
     tearDown = fixtures.StateTests.tearDown
+
+    def test_bulk_rule_save_and_clear_keeps_history_and_site_records(self):
+        days=['2026-10-23','2026-10-26','2026-11-02']
+        app.save_json(app.STATE_FILE, {'runs': {days[0]: {'checkout': {'status':'success','target':'2026-10-23T19:15'}}}})
+        save_rule(app, dict(dates=days, vacation=True, exclude_overtime=False))
+        state=app.load_json(app.STATE_FILE,{})
+        self.assertTrue(all(state['day_rules'][key]['vacation'] for key in days))
+        self.assertEqual(state['runs'][days[0]]['checkout']['target'],'2026-10-23T19:15')
+        save_rule(app, dict(dates=days[:2], vacation=False, exclude_overtime=True))
+        state=app.load_json(app.STATE_FILE,{})
+        self.assertTrue(state['day_rules'][days[2]]['vacation'])
+        self.assertTrue(all(state['day_rules'][key]['exclude_overtime'] for key in days[:2]))
+
+    def test_bulk_invalid_date_is_atomic(self):
+        before={'day_rules':{'2026-10-01':{'vacation':True}}}
+        app.save_json(app.STATE_FILE,before)
+        with self.assertRaises(ValueError):
+            save_rule(app, dict(dates=['2026-10-23','invalid'],vacation=True,exclude_overtime=False))
+        self.assertEqual(app.load_json(app.STATE_FILE,{}),before)
+
+    def test_summary_counts_existing_records_without_changing_dates(self):
+        rows=[dict(date='2026-10-23',checkin='08:30',checkout='19:55',rule={'vacation':True}),
+              dict(date='2026-10-26',checkin='09:00',checkout='18:00',rule={}),
+              dict(date='2026-10-27',checkin=':',checkout='20:00',rule={})]
+        summary=summarize_month(rows,{},lambda day:True)
+        self.assertEqual(summary['recorded_days'],1)
+        self.assertEqual(summary['remaining_days'],9)
+        self.assertEqual(summary['excluded_record_days'],1)
+        self.assertEqual(rows[0]['checkout'],'19:55')
+        self.assertEqual(summarize_month(rows,{'monthly_overtime_hours':10,'daily_overtime_hours':2},lambda day:True)['target_days'],5)
     def test_vacation_blocks_cached_target_and_both_modes(self):
         day = date(2026, 10, 23)
         state = {'day_rules': {str(day): {'vacation': True}}, 'runs': {str(day): {'checkout': {'target': '2026-10-23T19:55'}}}}

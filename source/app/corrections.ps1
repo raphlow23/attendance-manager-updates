@@ -8,7 +8,7 @@ $dataRoot=Join-Path $PSScriptRoot 'dist'
 $script:worker=$null; $script:snapshot=@{}; $script:jobPath=$null
 $form=New-Object Windows.Forms.Form
 $form.Text='근태매니저 — 휴가·연장 제외일 및 근태 정정'
-$form.Size=New-Object Drawing.Size(1050,730)
+$form.Size=New-Object Drawing.Size(1050,880)
 $form.StartPosition='CenterScreen'; $form.FormBorderStyle='FixedDialog'; $form.MaximizeBox=$false
 $form.Font=New-Object Drawing.Font('Malgun Gothic',10)
 function Label($text,$x,$y,$width) {
@@ -54,6 +54,119 @@ $actual=New-Object Windows.Forms.CheckBox; $actual.Text='입력한 시간이 실
 $apply=Button '변경 내용 확인 후 사이트 저장' 690 551 320; $apply.Enabled=$false
 $status=New-Object Windows.Forms.Label; $status.Text='휴가는 사이트의 휴가 처리 규정에 따라 등록하세요. 정정 후 시간외근무 신청에서 월을 다시 조회하세요.'
 $status.Location=New-Object Drawing.Point(20,610); $status.Size=New-Object Drawing.Size(990,65); $form.Controls.Add($status)
+# Make room for the saved-date list above the site-query controls.
+foreach($control in $form.Controls){
+ if($control.Top -ge 130){$control.Top+=130}
+}
+$grid.Height=230
+$rulesGrid=New-Object Windows.Forms.DataGridView
+$rulesGrid.Location=New-Object Drawing.Point(20,140);$rulesGrid.Size=New-Object Drawing.Size(990,110)
+$rulesGrid.AllowUserToAddRows=$false;$rulesGrid.AllowUserToDeleteRows=$false;$rulesGrid.ReadOnly=$true
+$rulesGrid.RowHeadersVisible=$false;$rulesGrid.SelectionMode='FullRowSelect';$rulesGrid.MultiSelect=$false
+$rulesGrid.AutoSizeColumnsMode='Fill'
+foreach($spec in @(@('date','저장 날짜 (선택하여 설정 변경)'),@('vacation','휴가'),@('exclude','연장근무 제외'),@('hold','자동 처리 보류'))){[void]$rulesGrid.Columns.Add($spec[0],$spec[1])}
+$form.Controls.Add($rulesGrid)
+$summaryLabel=New-Object Windows.Forms.Label
+$summaryLabel.Text='사이트 연장 기록: 조회 전 (근무일 19:00 이후 퇴근 기준)'
+$summaryLabel.Location=New-Object Drawing.Point(20,558);$summaryLabel.Size=New-Object Drawing.Size(990,35)
+$form.Controls.Add($summaryLabel)
+$form.Controls.Remove($dayPicker)
+foreach($control in @($form.Controls)){
+ if($control.Text -eq '설정 날짜' -or $control.Text.StartsWith('체크를 해제하고 저장하면')){$form.Controls.Remove($control);$control.Dispose();continue}
+ if($control.Top -ge 595){$control.Top+=24}
+ elseif($control.Top -ge 260 -and $control.Top -le 300){$control.Top+=75}
+}
+$grid.Top=390;$grid.Height=180;$summaryLabel.Top=575
+$vacation.Location=New-Object Drawing.Point(245,302);$exclude.Top=302;$saveRule.Top=298
+$rulesGrid.Location=New-Object Drawing.Point(650,45);$rulesGrid.Size=New-Object Drawing.Size(360,245)
+$rulesGrid.Columns['date'].HeaderText='저장 날짜';$rulesGrid.Columns['date'].FillWeight=130
+$rulesGrid.Columns['hold'].HeaderText='처리 상태'
+$calendar=New-Object Windows.Forms.Panel
+$calendar.Location=New-Object Drawing.Point(20,45);$calendar.Size=New-Object Drawing.Size(610,245);$calendar.BackColor=[Drawing.Color]::White
+$form.Controls.Add($calendar)
+$script:calendarMonth=(Get-Date -Day 1).Date
+$script:chosenDates=New-Object 'Collections.Generic.HashSet[string]'
+$script:savedRules=[PSCustomObject]@{}
+$calendarTitle=New-Object Windows.Forms.Label
+$calendarTitle.Location=New-Object Drawing.Point(110,8);$calendarTitle.Size=New-Object Drawing.Size(340,30);$calendarTitle.TextAlign='MiddleCenter';$calendar.Controls.Add($calendarTitle)
+$chosenLabel=New-Object Windows.Forms.Label
+$chosenLabel.Location=New-Object Drawing.Point(20,303);$chosenLabel.Size=New-Object Drawing.Size(220,30);$form.Controls.Add($chosenLabel)
+$calendarPrev=New-Object Windows.Forms.Button;$calendarPrev.Text='◀';$calendarPrev.Location=New-Object Drawing.Point(5,5);$calendarPrev.Size=New-Object Drawing.Size(45,32);$calendar.Controls.Add($calendarPrev)
+$calendarNext=New-Object Windows.Forms.Button;$calendarNext.Text='▶';$calendarNext.Location=New-Object Drawing.Point(55,5);$calendarNext.Size=New-Object Drawing.Size(45,32);$calendar.Controls.Add($calendarNext)
+$clearDates=New-Object Windows.Forms.Button;$clearDates.Text='선택 해제';$clearDates.Location=New-Object Drawing.Point(485,5);$clearDates.Size=New-Object Drawing.Size(115,32);$calendar.Controls.Add($clearDates)
+for($column=0;$column -lt 7;$column++){
+ $dayLabel=New-Object Windows.Forms.Label;$dayLabel.Text=@('일','월','화','수','목','금','토')[$column]
+ $dayLabel.Location=New-Object Drawing.Point((5+$column*86),40);$dayLabel.Size=New-Object Drawing.Size(82,23);$dayLabel.TextAlign='MiddleCenter';$calendar.Controls.Add($dayLabel)
+}
+$script:calendarButtons=@()
+for($cell=0;$cell -lt 42;$cell++){
+ $button=New-Object Windows.Forms.Button;$button.FlatStyle='Flat';$button.FlatAppearance.BorderSize=0
+ $button.Location=New-Object Drawing.Point((5+($cell%7)*86),(65+[Math]::Floor($cell/7)*29));$button.Size=New-Object Drawing.Size(82,27)
+ $button.Font=New-Object Drawing.Font('Malgun Gothic',9)
+ $button.Add_Click({param($sender,$eventArgs)
+  $key=[string]$sender.Tag
+  if($script:chosenDates.Contains($key)){[void]$script:chosenDates.Remove($key)}else{[void]$script:chosenDates.Add($key)}
+  Render-Calendar
+ })
+ $calendar.Controls.Add($button);$script:calendarButtons+=$button
+}
+function Render-Calendar {
+ $calendarTitle.Text=$script:calendarMonth.ToString('yyyy년 MM월')+' · 휴가: 휴 / 연장 제외: 제'
+ $offset=[int]$script:calendarMonth.DayOfWeek
+ $length=[DateTime]::DaysInMonth($script:calendarMonth.Year,$script:calendarMonth.Month)
+ for($index=0;$index -lt 42;$index++){
+  $button=$script:calendarButtons[$index];$number=$index-$offset+1
+  if($number -lt 1 -or $number -gt $length){$button.Visible=$false;$button.Text='';$button.Tag='';$button.BackColor=[Drawing.Color]::White;continue}
+  $button.Visible=$true
+  $key=$script:calendarMonth.AddDays($number-1).ToString('yyyy-MM-dd');$button.Tag=$key
+  $rule=$script:savedRules.$key
+  $marker=if($rule.vacation -and $rule.exclude_overtime){' 휴·제'}elseif($rule.vacation){' 휴'}elseif($rule.exclude_overtime){' 제'}else{''}
+  $button.Text=[string]$number+$marker
+  $button.BackColor=if($script:chosenDates.Contains($key)){[Drawing.ColorTranslator]::FromHtml('#E98244')}elseif($rule.vacation){[Drawing.ColorTranslator]::FromHtml('#55B6A6')}elseif($rule.exclude_overtime){[Drawing.ColorTranslator]::FromHtml('#4BAFC9')}else{[Drawing.ColorTranslator]::FromHtml('#F1F3F7')}
+  $button.ForeColor=[Drawing.ColorTranslator]::FromHtml('#343C46')
+ }
+ $chosenLabel.Text="선택 $($script:chosenDates.Count)개 · 재클릭하면 해제"
+ $saveRule.Text="선택 $($script:chosenDates.Count)개 설정 저장"
+}
+$calendarPrev.Add_Click({$script:calendarMonth=$script:calendarMonth.AddMonths(-1);Render-Calendar})
+$calendarNext.Add_Click({$script:calendarMonth=$script:calendarMonth.AddMonths(1);Render-Calendar})
+$clearDates.Add_Click({$script:chosenDates.Clear();Render-Calendar})
+$script:loadingRuleList=$false
+function Set-RuleRows($Rules) {
+ $script:savedRules=if($Rules){$Rules}else{[PSCustomObject]@{}}
+ $script:loadingRuleList=$true
+ try {
+  $rulesGrid.Rows.Clear()
+  if($Rules){foreach($property in ($Rules.PSObject.Properties|Sort-Object Name)){
+   $rule=$property.Value
+   if(-not ($rule.vacation -or $rule.exclude_overtime -or $rule.manual_hold)){continue}
+   $day=[DateTime]::MinValue
+   if(-not [DateTime]::TryParseExact($property.Name,'yyyy-MM-dd',[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::None,[ref]$day)){continue}
+   $vacText=if($rule.vacation){'휴가'}else{''}
+   $excludeText=if($rule.exclude_overtime){'제외'}else{''}
+   $holdText=if($rule.manual_hold){'사이트 확인 필요'}else{''}
+   [void]$rulesGrid.Rows.Add($property.Name,$vacText,$excludeText,$holdText)
+  }}
+  $rulesGrid.ClearSelection()
+ }finally{$script:loadingRuleList=$false;Render-Calendar}
+}
+function Refresh-RuleList {
+ $path=Join-Path $dataRoot '자동출퇴근상태.json'
+ if(Test-Path -LiteralPath $path){
+  $state=Get-Content -LiteralPath $path -Raw -Encoding UTF8|ConvertFrom-Json
+  Set-RuleRows $state.day_rules
+ }else{Set-RuleRows $null}
+}
+function Select-SavedRule {
+ if($script:loadingRuleList -or $rulesGrid.SelectedRows.Count -eq 0){return}
+ $dayPicker.Value=[DateTime]::ParseExact([string]$rulesGrid.SelectedRows[0].Cells['date'].Value,'yyyy-MM-dd',[Globalization.CultureInfo]::InvariantCulture)
+ $script:chosenDates.Clear();[void]$script:chosenDates.Add($dayPicker.Value.ToString('yyyy-MM-dd'))
+ $script:calendarMonth=New-Object DateTime($dayPicker.Value.Year,$dayPicker.Value.Month,1)
+ Read-Rule
+ Render-Calendar
+}
+$rulesGrid.Add_SelectionChanged({Select-SavedRule})
+$rulesGrid.Add_CellClick({Select-SavedRule})
 $timer=New-Object Windows.Forms.Timer; $timer.Interval=150
 function Read-Rule {
  $vacation.Checked=$false; $exclude.Checked=$false
@@ -78,15 +191,17 @@ function Start-Job($job) {
  $status.Text='처리 중입니다. 사이트 응답을 기다려 주세요.'; $timer.Start()
 }
 $dayPicker.Add_ValueChanged({ Read-Rule })
-$saveRule.Add_Click({try {Start-Job @{operation='rules';date=$dayPicker.Value.ToString('yyyy-MM-dd');vacation=$vacation.Checked;exclude_overtime=$exclude.Checked}}catch{ $status.Text=$_.Exception.Message }})
+$saveRule.Add_Click({try {
+ if($script:chosenDates.Count -eq 0){throw '달력에서 저장할 날짜를 선택하세요. 여러 날짜를 클릭할 수 있습니다.'}
+ Start-Job @{operation='rules';dates=@($script:chosenDates|Sort-Object);vacation=$vacation.Checked;exclude_overtime=$exclude.Checked}
+}catch{ $status.Text=$_.Exception.Message }})
 function Selected-Month { [DateTime]::ParseExact([string]$month.SelectedItem,'yyyy년 MM월',[Globalization.CultureInfo]::InvariantCulture).ToString('yyyy-MM') }
-$scan.Add_Click({try {$grid.Rows.Clear();$script:snapshot=@{};Start-Job @{operation='scan';month=(Selected-Month)}}catch{$status.Text=$_.Exception.Message}})
-$month.Add_SelectedIndexChanged({$grid.Rows.Clear();$script:snapshot=@{};$apply.Enabled=$false;$selected.Text='조회 후 행 선택'})
+$scan.Add_Click({try {$summaryLabel.Text='사이트 연장 기록: 조회 중';$grid.Rows.Clear();$script:snapshot=@{};Start-Job @{operation='scan';month=(Selected-Month)}}catch{$status.Text=$_.Exception.Message}})
+$month.Add_SelectedIndexChanged({$grid.Rows.Clear();$script:snapshot=@{};$apply.Enabled=$false;$selected.Text='조회 후 행 선택';$summaryLabel.Text='사이트 연장 기록: 해당 월을 조회하세요.'})
 $grid.Add_SelectionChanged({
  if($grid.SelectedRows.Count -eq 0) {$apply.Enabled=$false;return}
  $key=[string]$grid.SelectedRows[0].Cells['date'].Value
  $selected.Text=$key; $checkin.Clear();$checkout.Clear();$actual.Checked=$false;$reason.Clear()
- $dayPicker.Value=[DateTime]::ParseExact($key,'yyyy-MM-dd',[Globalization.CultureInfo]::InvariantCulture);Read-Rule
  $apply.Enabled=$true
 })
 $apply.Add_Click({
@@ -116,11 +231,16 @@ $timer.Add_Tick({
     [void]$grid.Rows.Add($row.date,$row.checkin,$row.checkout,$ruleText,$row.note)
    }
    $status.Text='정정할 행을 선택하고 실제 시간과 사유를 입력하세요. 빈 입력칸은 기존 값을 유지합니다.'
+   $s=$result.summary
+   $summaryLabel.Text="사이트 연장 기록 $($s.recorded_days)일 / 설정 기준 $($s.target_days)일 · 부족 $($s.remaining_days)일 · 초과 $($s.excess_days)일 · 제외일 중 연장 기록 $($s.excluded_record_days)일 (확인 필요)"
   }else{
    $status.Text=$result.message
-   $grid.Rows.Clear();$script:snapshot=@{};$selected.Text='조회 후 행 선택';Read-Rule
+   $grid.Rows.Clear();$script:snapshot=@{};$selected.Text='조회 후 행 선택'
+   if($script:operation -eq 'rules'){$script:chosenDates.Clear()}
+   $summaryLabel.Text='사이트 연장 기록: 해당 월을 다시 조회하세요.'
   }
- }catch{$status.Text='처리 확인 필요: '+$_.Exception.Message+' (결과가 불확실하면 사이트를 확인하고 다시 조회하세요.)'}
+  Refresh-RuleList
+ }catch{$summaryLabel.Text='사이트 연장 기록: 확인 필요';$status.Text='처리 확인 필요: '+$_.Exception.Message+' (결과가 불확실하면 사이트를 확인하고 다시 조회하세요.)'}
  finally{
   $script:worker.Dispose();$script:worker=$null
   Remove-Item -LiteralPath $script:jobPath,($script:jobPath+'.result.json') -Force -ErrorAction SilentlyContinue
@@ -131,10 +251,34 @@ $form.Add_FormClosing({if($script:worker){$_.Cancel=$true;$status.Text='진행 �
 . (Join-Path $PSScriptRoot 'theme.ps1')
 Set-UiTheme $form
 $apply.BackColor=$script:UiOrange
+Render-Calendar
 if($SelfTest){
  if($dayPicker.CustomFormat -ne 'yyyy-MM-dd' -or $grid.Columns.Count -ne 5){throw '정정 화면 구조 오류'}
+ $fixtureRules=('{"2026-11-02":{"vacation":true},"2026-10-29":{"exclude_overtime":true},"2026-10-01":{"vacation":false}}'|ConvertFrom-Json)
+ Set-RuleRows $fixtureRules
+ if($rulesGrid.Rows.Count -ne 2 -or $rulesGrid.Rows[0].Cells['date'].Value -ne '2026-10-29'){throw '저장 제외일 목록 검사 실패'}
+ Set-RuleRows $null
+ if($rulesGrid.Rows.Count -ne 0){throw '해제일 목록 갱신 실패'}
+ $script:calendarMonth=[DateTime]'2026-10-01'
+ Render-Calendar
+ $available=@($script:calendarButtons|Where-Object{$_.Tag})
+ if($available.Count -ne 31 -or @($available|Where-Object{$_.Text -eq '1'}).Count -ne 1){throw '달력 날짜 표시 실패'}
+ $oct2=@($script:calendarButtons|Where-Object{$_.Tag -eq '2026-10-02'})[0]
+ $oct29=@($script:calendarButtons|Where-Object{$_.Tag -eq '2026-10-29'})[0]
+ foreach($target in @($oct2,$oct29)){
+  [void]$target.GetType().GetMethod('OnClick',[Reflection.BindingFlags]'Instance,NonPublic').Invoke($target,@([EventArgs]::Empty))
+ }
+ [void]$oct2.GetType().GetMethod('OnClick',[Reflection.BindingFlags]'Instance,NonPublic').Invoke($oct2,@([EventArgs]::Empty))
+ if($script:chosenDates.Count -ne 1 -or $script:chosenDates.Contains('2026-10-02')){throw '달력 재클릭 해제 실패'}
+ [void]$oct2.GetType().GetMethod('OnClick',[Reflection.BindingFlags]'Instance,NonPublic').Invoke($oct2,@([EventArgs]::Empty))
+ [void]$calendarNext.GetType().GetMethod('OnClick',[Reflection.BindingFlags]'Instance,NonPublic').Invoke($calendarNext,@([EventArgs]::Empty))
+ if($script:chosenDates.Count -ne 2 -or $script:calendarMonth.Month -ne 11){throw '달력 다중 선택 보존 실패'}
+ [void]$clearDates.GetType().GetMethod('OnClick',[Reflection.BindingFlags]'Instance,NonPublic').Invoke($clearDates,@([EventArgs]::Empty));if($script:chosenDates.Count -ne 0){throw '달력 선택 해제 실패'}
+ $script:calendarMonth=[DateTime]'2026-10-01'
+ if($PreviewPath){Set-RuleRows $fixtureRules}
  Write-UiPreview $form $PreviewPath;Write-Output 'CORRECTIONS_UI_OK';$form.Dispose();$timer.Dispose();exit 0
 }
 Read-Rule
+try{Refresh-RuleList}catch{$status.Text='저장된 제외일 목록을 읽지 못했습니다. '+$_.Exception.Message}
 if(-not (Enter-WorkdayUi 'corrections')){$form.Dispose();$timer.Dispose();exit 0}
 try { Show-WorkdayDialog $form $OwnerHandle } finally {Exit-WorkdayUi;$timer.Dispose()}

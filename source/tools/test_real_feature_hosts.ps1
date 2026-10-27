@@ -15,15 +15,16 @@ $fixtureTimer.Interval=500
 $fixtureTimer.Add_Tick({$fixtureTimer.Stop();$form.Close()})
 $form.Add_Shown({[IO.File]::WriteAllText((Join-Path $PSScriptRoot 'shown.json'),(@{pid=$PID;shown=[DateTime]::UtcNow.Ticks}|ConvertTo-Json));$fixtureTimer.Start()})
 '@
-foreach($name in @('control.ps1','overtime.ps1','status.ps1','보안안내.ps1')){
+foreach($name in @('control.ps1','corrections.ps1','overtime.ps1','status.ps1','보안안내.ps1')){
  $source=[IO.File]::ReadAllText((Join-Path $taskRoot ('app\'+$name)))
+ $source=$source.Replace("Enter-WorkdayUi '",("Enter-WorkdayUi 'fixture-"+[IO.Path]::GetFileName($fixture)+'-'))
  $source=[regex]::Replace($source,'(?m)^(?=try \{ Show-WorkdayDialog|Show-WorkdayDialog)',($prefix+"`r`n"))
  [IO.File]::WriteAllText((Join-Path $fixture $name),$source,(New-Object Text.UTF8Encoding($true)))
 }
 $hosts=New-WorkdayFeatureHosts $fixture
 try{
  $metrics=@()
- foreach($name in @('control.ps1','control.ps1','overtime.ps1','status.ps1','보안안내.ps1')){
+ foreach($name in @('control.ps1','control.ps1','corrections.ps1','overtime.ps1','status.ps1','보안안내.ps1')){
   Remove-Item (Join-Path $fixture 'shown.json') -ErrorAction SilentlyContinue
   $start=[DateTime]::UtcNow
   Open-WorkdayFeatureHost $hosts $name 0

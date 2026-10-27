@@ -3,7 +3,7 @@ import calendar
 import re
 from datetime import date
 
-from selenium.common.exceptions import NoAlertPresentException, StaleElementReferenceException
+from selenium.common.exceptions import NoAlertPresentException, StaleElementReferenceException, TimeoutException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import Select, WebDriverWait
@@ -54,14 +54,35 @@ class OvertimePage:
 
     def open(self):
         one(self.driver.find_elements(By.LINK_TEXT, '근무일지'), '근무일지 메뉴').click()
-        # The card title and its "바로가기" can be a single link or separate.
-        candidates = self.driver.find_elements(By.XPATH, "//a[contains(normalize-space(.),'시간외근무신청')]")
-        candidates = visible(candidates)
-        if not candidates:
-            cards = self.driver.find_elements(By.XPATH, "//*[self::h2 or self::h3 or self::h4][normalize-space(.)='시간외근무신청']/..//a")
-            candidates = visible(cards)
-        one(candidates, '시간외근무신청 바로가기').click()
-        self.wait.until(lambda d: '시간외근무 신청서' in d.find_element(By.TAG_NAME, 'body').text)
+        try:
+            control = self.wait.until(lambda _: self.entry_control())
+        except TimeoutException as error:
+            raise RuntimeError('근무일지에서 시간외근무 신청 바로가기를 찾지 못했습니다. 사이트 메뉴와 접근 권한을 확인하세요.') from error
+        control.click()
+        self.wait.until(lambda d: '시간외근무신청서' in re.sub(r'\s+', '', d.find_element(By.TAG_NAME, 'body').text))
+
+    def entry_control(self):
+        controls = visible(self.driver.find_elements(By.CSS_SELECTOR, "a, button, input[type='button'], input[type='submit']"))
+        direct = [c for c in controls if '시간외근무신청' in re.sub(r'\s+', '', label(c))]
+        if direct:
+            return one(direct, '시간외근무 신청 메뉴')
+        # Titles are often div/strong/span nodes and the link is a sibling in
+        # a nested card. Walk only nearby parents; never guess a destination URL.
+        titles = visible(self.driver.find_elements(By.XPATH, "//*[translate(normalize-space(.), ' \t\r\n', '')='시간외근무신청']"))
+        matches = []
+        for title in titles:
+            parent = title
+            for _ in range(5):
+                parent = parent.find_element(By.XPATH, '..')
+                choices = visible(parent.find_elements(By.CSS_SELECTOR, "a, button, input[type='button'], input[type='submit']"))
+                choices = [c for c in choices if re.sub(r'\s+', '', label(c)) == '바로가기']
+                if len(choices) == 1:
+                    if choices[0] not in matches:
+                        matches.append(choices[0])
+                    break
+                if len(choices) > 1:
+                    break
+        return one(matches, '시간외근무 신청 바로가기') if matches else False
 
     def existing(self, row):
         day = date.fromisoformat(row['date'])

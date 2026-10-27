@@ -285,8 +285,12 @@ $taskTimer.Add_Tick({
         $status.Text=if($result.message){$result.message}else{$result.lines -join "`n"}
         if($job.action -eq 'register'){$pwBox.Clear()}
     } catch {
-        $status.Text='처리 확인: '+$_.Exception.Message
-        if($job.action -ne 'status'){[void][Windows.Forms.MessageBox]::Show($form,$_.Exception.Message,'처리 확인')}
+        $cause=$_.Exception
+        while($cause.InnerException){$cause=$cause.InnerException}
+        $detail=$cause.Message
+        if($detail.Length -gt 1200){$detail=$detail.Substring(0,1200)+'… 실행 로그에서 전체 원인을 확인하세요.'}
+        $status.Text='처리 확인: '+$detail
+        if($job.action -ne 'status'){[void][Windows.Forms.MessageBox]::Show($form,$detail,'처리 확인')}
         if(Test-Path -LiteralPath $SettingsFile){$script:CurrentSettings=Get-Content -LiteralPath $SettingsFile -Raw -Encoding UTF8|ConvertFrom-Json}
     } finally {
         $job.pipeline.Dispose(); $script:TaskJob=$null
