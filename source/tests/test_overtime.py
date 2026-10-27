@@ -1,4 +1,5 @@
 import sys
+from contextlib import nullcontext
 import unittest
 from datetime import date
 from pathlib import Path
@@ -11,6 +12,37 @@ import resident
 
 
 class OvertimeTests(unittest.TestCase):
+    def test_scan_succeeds_without_application_menu_and_protects_prior_submissions(self):
+        driver=Mock()
+        app=Mock(SETTINGS_FILE='settings',STATE_FILE='state',SITE_URL='https://test.invalid')
+        app.file_lock.side_effect=lambda *a,**kw:nullcontext()
+        app.create_driver.return_value=driver
+        app.load_json.side_effect=[{'id':'test-only','pw':'test-only'},
+                                  {'overtime_applications':{'2026-09-04':{'status':'uncertain'}}}]
+        rows=[self.row(),dict(self.row(),date='2026-09-07')]
+        with patch.object(overtime,'collect_month',return_value=rows),patch.object(overtime,'WebDriverWait'),patch.object(overtime,'OvertimePage') as page:
+            page.return_value.open.side_effect=RuntimeError('no application menu')
+            result=overtime.run_job(app,{'operation':'scan','month':'2026-09'})
+        self.assertTrue(result['ok'])
+        self.assertEqual(len(result['rows']),2)
+        self.assertFalse(result['rows'][0]['selectable'])
+        self.assertTrue(result['rows'][1]['selectable'])
+        page.assert_not_called()
+        driver.quit.assert_called_once()
+
+    def test_submit_still_checks_remote_duplicates_before_writing(self):
+        app=Mock(SETTINGS_FILE='settings',STATE_FILE='state',SITE_URL='https://test.invalid')
+        app.file_lock.side_effect=lambda *a,**kw:nullcontext()
+        app.load_json.side_effect=[{'id':'test-only','pw':'test-only'},{},{}]
+        row=self.row()
+        with patch.object(overtime,'collect_month',return_value=[row]),patch.object(overtime,'WebDriverWait'),patch.object(overtime,'OvertimePage') as page:
+            page.return_value.existing.return_value=True
+            result=overtime.run_job(app,{'operation':'submit','month':'2026-09','rows':[dict(row,purpose='직접 입력') ]})
+        page.return_value.open.assert_called_once()
+        page.return_value.existing.assert_called_once()
+        page.return_value.fill.assert_not_called()
+        self.assertEqual(result['rows'][0]['status'],'기존 신청 유지')
+
     def test_entry_link_accepts_spacing_and_button(self):
         control=Mock(text='시간외근무 신청',is_displayed=Mock(return_value=True))
         driver=Mock()

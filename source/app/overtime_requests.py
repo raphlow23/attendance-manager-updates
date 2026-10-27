@@ -205,6 +205,7 @@ def run_job(app, job):
     settings = app.load_json(app.SETTINGS_FILE, {})
     if not settings.get('id') or not settings.get('pw'):
         raise ValueError('계정을 먼저 저장해 주세요.')
+    app._LOG_SECRETS.add(settings['pw'])
     with app.file_lock('action', timeout=120):
         driver = app.create_driver()
         try:
@@ -214,17 +215,21 @@ def run_job(app, job):
             wait.until(EC.visibility_of_element_located((By.NAME, 'iduser'))).send_keys(settings['id'])
             driver.find_element(By.NAME, 'pass').send_keys(settings['pw'])
             driver.find_element(By.CSS_SELECTOR, 'button[type="submit"]').click()
-            wait.until(EC.element_to_be_clickable((By.LINK_TEXT, '근무일지')))
+            wait.until(EC.element_to_be_clickable((By.LINK_TEXT, '근태관리')))
             rows = collect_month(driver, month, date.today(), app.is_workday)
-            page = OvertimePage(driver)
-            page.open()
             with app.file_lock('state'):
                 statuses = app.load_json(app.STATE_FILE, {}).get('overtime_applications', {})
             if operation == 'scan':
                 for row in rows:
-                    row['status'] = ('기존 신청 있음' if page.existing(row) else
-                                     '확인 필요' if statuses.get(row['date'], {}).get('status') in ('success', 'sending', 'uncertain') else '신청 가능')
-                return {'ok': True, 'rows': rows}
+                    prior = statuses.get(row['date'], {}).get('status')
+                    row['selectable'] = prior not in ('success', 'sending', 'uncertain')
+                    row['status'] = ('기존 신청 기록 있음 · 사이트 확인 필요' if prior == 'success' else
+                                     '신청 결과 확인 필요' if not row['selectable'] else '조회 완료 · 신청 전 중복 확인')
+                # Listing recorded overtime needs only attendance access. A
+                # missing application menu must not discard the collected rows.
+                return {'ok': True, 'rows': rows, 'message': '기존 신청 여부는 신청 직전에 사이트에서 다시 확인합니다.'}
+            page = OvertimePage(driver)
+            page.open()
             def persist(values):
                 with app.file_lock('state'):
                     state = app.load_json(app.STATE_FILE, {})

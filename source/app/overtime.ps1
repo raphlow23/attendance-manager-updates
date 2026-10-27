@@ -184,9 +184,9 @@ $timer.Add_Tick({
         if ($script:operation -eq 'scan') {
             $grid.Rows.Clear()
             foreach ($entry in $result.rows) {
-                [void]$grid.Rows.Add(($entry.status -eq '신청 가능'), $entry.date, $entry.weekday, $entry.checkout, $entry.start, $entry.end, '', $entry.status)
+                [void]$grid.Rows.Add([bool]$entry.selectable, $entry.date, $entry.weekday, $entry.checkout, $entry.start, $entry.end, '', $entry.status)
             }
-            $statusLabel.Text = "$script:scanMonth 실제 연장 퇴근 $($grid.Rows.Count)일. 날짜별 근무목적을 입력해 주세요."
+            $statusLabel.Text = "$script:scanMonth 연장 퇴근 $($grid.Rows.Count)일. 근무목적을 입력하세요. $($result.message)"
         } else {
             foreach ($entry in $result.rows) {
                 foreach ($row in $grid.Rows) {
