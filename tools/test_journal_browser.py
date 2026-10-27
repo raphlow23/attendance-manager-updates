@@ -24,7 +24,7 @@ def trip_page():
     form+=sel('kind',[('x','선택'),('center','센터')])+inp('y',2026)+inp('m',10)+inp('d',27)+inp('place','','출장장소')+inp('purpose','','출장목적을 구체적으로 입력하세요')
     form+=sel('transport',[('x','선택'),('public','대중교통')])+numbers('sh',24,'시')+numbers('sm',60,'분')+numbers('eh',24,'시')+numbers('em',60,'분')+'<button type="submit">확인</button></form>'
     heads=''.join('<th>'+t+'</th>' for t in ('구분','출장일','출장장소','출장목적','이동수단','출발시간','복귀시간','출장시간'))
-    body=''.join('<tr>'+''.join('<td>'+escape(str(v))+'</td>' for v in ('센터',r['date'],r['location'],r['purpose'],'대중교통',r['start'],r['end'],'시간'))+'</tr>' for r in trip_records)
+    body=''.join('<tr>'+''.join('<td>'+escape(str(v))+'</td>' for v in ('센터',f"{int(r['date'][5:7])}월 {int(r['date'][8:])}일 (수)",r['location'],r['purpose'],'대중교통',r['start'],r['end'],'시간'))+'</tr>' for r in trip_records)
     return NAV+'<h2>출장 등록하기</h2>'+form+'<h2>사용자님의 10월 출장일지</h2><table><thead><tr>'+heads+'</tr></thead><tbody>'+body+'</tbody></table>'
 def overtime_page(edit=None):
     r=ot_records[edit] if edit is not None else None
@@ -146,5 +146,5 @@ try:
      assert len(rejected)==1 and rejected[0]['status'].startswith('확인 필요:') and statuses[rows[0]['date']]['status']=='uncertain',rejected
      assert len(ot_records)==3 and ot_records[0]['purpose']=='수정한 새 근무목적'
     finally:driver.quit()
-   print('JOURNAL_BROWSER_OK: attendance month 10→9→10 with native clicks disabled; trip workflow + unchecked/blank-purpose exclusions and partial-budget warning + work-log direct form + user-supplied direct URL without menu links; overtime purpose absent from list / success page without history / observed-page refresh / two sequential POSTs / existing date purpose updated once / uncertain missing date added / detail purpose verified / no duplicate dates; no target-site requests')
+   print('JOURNAL_BROWSER_OK: attendance month 10→9→10 with native clicks disabled; trip short-date history after POST verified / no duplicate; trip workflow + unchecked/blank-purpose exclusions and partial-budget warning + work-log direct form + user-supplied direct URL without menu links; overtime purpose absent from list / success page without history / observed-page refresh / two sequential POSTs / existing date purpose updated once / uncertain missing date added / detail purpose verified / no duplicate dates; no target-site requests')
 finally:server.shutdown();server.server_close();thread.join()

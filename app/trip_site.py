@@ -13,6 +13,21 @@ TRIP_ENTRY_URL='http://sappd.kr/sappd_g6.php'
 
 def norm(text):return re.sub(r'\s+','',text)
 
+
+def history_date(text,month):
+    """Parse a date cell, using only the already verified monthly view as context."""
+    first=date.fromisoformat(month+'-01')
+    value=re.sub(r'\s+','',text)
+    value=re.sub(r'(?:\([월화수목금토일](?:요일)?\)|[월화수목금토일]요일)$','',value)
+    match=re.fullmatch(r'(\d{4})[-./년](\d{1,2})[-./월](\d{1,2})(?:일|\.)?',value)
+    if match:return date(*map(int,match.groups()))
+    if re.fullmatch(r'\d{8}',value):return date(int(value[:4]),int(value[4:6]),int(value[6:]))
+    match=re.fullmatch(r'(\d{1,2})[-./월](\d{1,2})(?:일|\.)?',value)
+    if match:return date(first.year,*map(int,match.groups()))
+    match=re.fullmatch(r'(\d{1,2})일',value)
+    if match:return first.replace(day=int(match[1]))
+    raise ValueError('지원하지 않는 출장일 표시')
+
 def set_value(driver,element,value):
     driver.execute_script('''const e=arguments[0],v=arguments[1];
     if(e.disabled||e.readOnly)throw new Error('Field is not editable');
@@ -118,15 +133,19 @@ class TripPage:
             for row in table.find_elements(By.XPATH,'.//tr[td]'):
                 cells=row.find_elements(By.XPATH,'./td')
                 if len(cells)<8:continue
-                match=re.search(r'(\d{4})\s*[-./년]\s*(\d{1,2})\s*[-./월]\s*(\d{1,2})',cells[1].text)
-                if not match:raise RuntimeError('기존 출장 날짜 표시를 해석하지 못했습니다.')
-                day=date(*map(int,match.groups()))
+                text=cells[1].text
+                try:day=history_date(text,month)
+                except ValueError as error:
+                    shown=re.sub(r'\s+',' ',text).strip()[:80] or '(빈 칸)'
+                    raise RuntimeError(f'기존 출장 날짜 표시를 해석하지 못했습니다. 조회 월 {month} / 출장일 칸: {shown!r}. 중복 확인 전에는 추가 등록하지 않습니다.') from error
                 if str(day)[:7]!=month:continue
                 times=[]
                 for cell in cells[5:7]:
                     clock=re.fullmatch(r'\s*(\d{1,2})\s*[:시]\s*(\d{1,2})\s*분?\s*',cell.text)
                     if not clock:raise RuntimeError('기존 출장 시각 표시를 해석하지 못했습니다.')
-                    hour,minute=map(int,clock.groups());times.append(f'{hour:02}:{minute:02}')
+                    hour,minute=map(int,clock.groups())
+                    if hour>23 or minute>59:raise RuntimeError('기존 출장 시각이 유효한 시간 범위를 벗어났습니다.')
+                    times.append(f'{hour:02}:{minute:02}')
                 result.append(dict(date=str(day),category=cells[0].text.strip(),location=cells[2].text.strip(),purpose=cells[3].text.strip(),transport=cells[4].text.strip(),start=times[0],end=times[1]))
         if tables!=1:raise RuntimeError('출장 내역 표를 하나로 확인하지 못했습니다. 중복 확인 전에는 등록하지 않습니다.')
         return result
