@@ -6,7 +6,7 @@ raises an error before submission and leaves the record for a later attempt.
 import re
 from datetime import date, datetime, timedelta
 
-from selenium.common.exceptions import NoAlertPresentException, StaleElementReferenceException
+from selenium.common.exceptions import NoAlertPresentException, StaleElementReferenceException, TimeoutException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import Select, WebDriverWait
 
@@ -131,6 +131,17 @@ class AttendancePage:
         return self.correct(day, {field: target}, before)
 
     def correct(self, day, targets, expected):
+        self.driver._workday_phase = '수정 전 기록 확인'
+        try:
+            return self._correct(day, targets, expected)
+        except Exception as error:
+            phase = self.driver._workday_phase
+            detail = '제한 시간 안에 화면 또는 저장 결과를 확인하지 못했습니다.' if isinstance(error, TimeoutException) else str(error).strip() or type(error).__name__
+            submitted = bool(getattr(self.driver, '_workday_write_submitted', False))
+            outcome = '저장 요청 이후이므로 사이트에서 결과를 다시 확인하세요.' if submitted else '저장 버튼을 누르기 전에 중단했습니다.'
+            raise RuntimeError(f'{day}: {phase} 실패 · {detail} {outcome}') from error
+
+    def _correct(self, day, targets, expected):
         """User-reviewed correction; preserve notes and reject stale snapshots."""
         self.driver._workday_write_submitted = False
         if not targets or set(targets) - {'checkin', 'checkout'}:
@@ -143,6 +154,7 @@ class AttendancePage:
         guard = getattr(self.driver, '_workday_before_write', None)
         if guard:
             guard()
+        self.driver._workday_phase = '해당 날짜 수정 버튼 열기'
         edit.click()
         response_check = getattr(self.driver, '_workday_check_response', None)
         if response_check:
@@ -152,11 +164,17 @@ class AttendancePage:
             candidates = []
             for table in visible(self.driver.find_elements(By.TAG_NAME, "table")):
                 heads = [re.sub(r"\s", "", h.text) for h in table.find_elements(By.XPATH, ".//tr[th][1]/th")]
+                if heads != ["출근시간", "퇴근시간", "비고", "수정"]:
+                    # Some versions render the editor heading with td or mixed
+                    # cells. Still require the exact semantic four-column form.
+                    heads = [re.sub(r"\s", "", h.text) for h in table.find_elements(By.XPATH, ".//tr[th or td][1]/*[self::th or self::td]")]
                 if heads == ["출근시간", "퇴근시간", "비고", "수정"]:
                     candidates.append(table)
             return candidates[0] if len(candidates) == 1 else False
 
+        self.driver._workday_phase = '출퇴근 수정 입력 화면 찾기'
         table = self.wait.until(edit_table)
+        self.driver._workday_phase = '수정 입력값 확인'
         rows = [r for r in table.find_elements(By.XPATH, ".//tr[td]") if visible(r.find_elements(By.TAG_NAME, "input"))]
         row = one(rows, "시간 수정 입력 행")
         cells = row.find_elements(By.XPATH, "./td")
@@ -188,11 +206,13 @@ class AttendancePage:
         if any(current[key] != before[key] for key in ("checkin", "checkout", "note")):
             raise RuntimeError("다른 곳에서 근태 기록이 변경되어 저장을 중단합니다.")
         save = one([c for c in cells[3].find_elements(By.CSS_SELECTOR, "button, a, input") if label(c) == "수정완료"], "수정완료 버튼")
+        self.driver._workday_phase = '수정완료 버튼 저장'
         self.driver._workday_write_submitted = True
         save.click()
         if response_check:
             response_check()
 
+        self.driver._workday_phase = '사이트에 저장된 출퇴근 시간 재확인'
         def verified(_):
             try:
                 self.driver.switch_to.alert.accept()

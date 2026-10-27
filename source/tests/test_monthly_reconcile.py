@@ -228,6 +228,36 @@ class ApplyTests(unittest.TestCase):
             result=monthly.run(app,['2026-09'],background=True)
         self.assertFalse(result['ok']);driver.assert_not_called()
 
+    def test_partial_apply_reports_saved_failed_and_unprocessed_dates(self):
+        page=MemoryPage([row(f'2026-09-{d:02}') for d in range(1,31)])
+        original=page.correct
+        def fail_second(day,targets,before):
+            if len(page.saved)==1:raise RuntimeError('수정 입력 화면 찾기 실패')
+            return original(day,targets,before)
+        with patch.object(app,'create_driver'),patch.object(monthly,'WebDriverWait'),patch.object(monthly,'AttendancePage',return_value=page):
+            preview=monthly.run(app,['2026-09'])
+            with patch.object(page,'correct',side_effect=fail_second):
+                result=monthly.apply_reviewed(app,{'plan_id':preview['plan_id'],'rows':[dict(date=e['date'],**e['after']) for e in preview['rows'][:3]]})
+        self.assertFalse(result['ok']);self.assertEqual(len(page.saved),1)
+        self.assertIn('개별 저장 확인',result['rows'][0]['status'])
+        self.assertIn('저장 실패',result['rows'][1]['status'])
+        self.assertIn('미처리',result['rows'][2]['status'])
+        self.assertIn('전체 정리가 완료되지 않았습니다',result['error'])
+
+    def test_final_month_mismatch_is_not_a_success(self):
+        page=MemoryPage([row(f'2026-09-{d:02}') for d in range(1,31)])
+        original=monthly._read_month
+        def changed_month(*args):
+            result=original(*args)
+            for entry in result:
+                if entry['date'] in page.saved:entry['checkout']='18:00'
+            return result
+        with patch.object(app,'create_driver'),patch.object(monthly,'WebDriverWait'),patch.object(monthly,'AttendancePage',return_value=page):
+            preview=monthly.run(app,['2026-09']);entry=preview['rows'][0]
+            with patch.object(monthly,'_read_month',side_effect=changed_month):
+                result=monthly.apply_reviewed(app,{'plan_id':preview['plan_id'],'rows':[dict(date=entry['date'],**entry['after'])]})
+        self.assertFalse(result['ok']);self.assertIn('최종 월 조회 값',result['error'])
+
     def test_review_rejects_changed_calendar_before_connecting(self):
         page=MemoryPage([row(f'2026-09-{d:02}') for d in range(1,31)])
         with patch.object(app,'create_driver') as driver,patch.object(monthly,'WebDriverWait'),patch.object(monthly,'AttendancePage',return_value=page):

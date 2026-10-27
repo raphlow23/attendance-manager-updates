@@ -226,7 +226,7 @@ function Set-ReviewView($Result) {
    $script:snapshot[$entry.date]=$entry.before
    $ci=if($entry.after.checkin){$entry.after.checkin}else{Format-Clock $entry.before.checkin}
    $co=if($entry.after.checkout){$entry.after.checkout}else{Format-Clock $entry.before.checkout}
-   $rowStatus=if($script:reviewId){$entry.status}else{'정리 완료'}
+   $rowStatus=if($entry.status){$entry.status}elseif($script:reviewId){'수정 예정'}else{'저장 확인 완료'}
    $index=$grid.Rows.Add(([bool]$script:reviewId -and [bool]$entry.selectable),$entry.date,$entry.before.checkin,$entry.before.checkout,$ci,$co,$entry.reason,$rowStatus,$entry.before.note)
    $locked=(-not $script:reviewId -or [bool]$entry.blocked)
    foreach($name in @('choose','checkin','checkout')){$grid.Rows[$index].Cells[$name].ReadOnly=$locked}
@@ -235,6 +235,7 @@ function Set-ReviewView($Result) {
  }finally{$script:loadingReview=$false;Update-ReviewSummary}
 }
 function Start-Job($job) {
+ $status.ForeColor=$script:UiInk
  $python=Join-Path $PSScriptRoot 'runtime\python.exe'
  if(-not (Test-Path -LiteralPath $python)) { throw '설치된 프로그램에서 실행하세요.' }
  New-Item -ItemType Directory -Path $dataRoot -Force|Out-Null
@@ -289,7 +290,17 @@ $timer.Add_Tick({
   }
   Refresh-RuleList
   if($resultError){throw $resultError}
- }catch{$summaryLabel.Text='사이트 연장 기록: 확인 필요';$status.Text='처리 확인 필요: '+$_.Exception.Message+' (결과가 불확실하면 사이트를 확인하고 다시 조회하세요.)'}
+  if($script:operation -eq 'reconcile_apply'){
+   $status.ForeColor=[Drawing.ColorTranslator]::FromHtml('#197548')
+   $status.Text='정리 완료 — 사이트에서 선택한 시간을 확인했습니다.'+"`r`n"+$result.message
+   [void][Windows.Forms.MessageBox]::Show($form,$status.Text,'정리 완료',[Windows.Forms.MessageBoxButtons]::OK,[Windows.Forms.MessageBoxIcon]::Information)
+  }
+ }catch{
+  $summaryLabel.Text='정리 미완료 · 오류 원인과 날짜별 상태를 확인하세요.'
+  $status.ForeColor=[Drawing.Color]::Firebrick
+  $status.Text='정리 실패: '+$_.Exception.Message
+  [void][Windows.Forms.MessageBox]::Show($form,$status.Text,'정리 미완료',[Windows.Forms.MessageBoxButtons]::OK,[Windows.Forms.MessageBoxIcon]::Error)
+ }
  finally{
   $script:worker.Dispose();$script:worker=$null
   Remove-Item -LiteralPath $script:jobPath,($script:jobPath+'.result.json') -Force -ErrorAction SilentlyContinue
@@ -352,6 +363,13 @@ if($SelfTest){
  if($apply.Enabled){throw '체크 해제 제외 실패'}
  $grid.Rows[0].Cells['choose'].Value=$true;Update-ReviewSummary
  if(-not $apply.Enabled){throw '편집 시간 적용 실패'}
+ $resultFixture=@{ok=$true;target_days=10;message='정리 완료: 사이트 확인 완료';all_rows=$fixtureReview.all_rows;rows=@(@{date='2026-10-07';before=$fixtureReview.rows[0].before;after=@{checkin='09:00';checkout='18:00'};status='저장 확인 완료';reason='연장 제외'})}
+ Set-ReviewView $resultFixture
+ if($grid.Rows[0].Cells['status'].Value -ne '저장 확인 완료' -or $apply.Enabled){throw '완료 상태 표시 실패'}
+ $resultFixture.ok=$false;$resultFixture.rows[0].status='저장 실패 · 재조회 필요';$resultFixture.message='정리 실패'
+ Set-ReviewView $resultFixture
+ if($grid.Rows[0].Cells['status'].Value -ne '저장 실패 · 재조회 필요'){throw '실패 상태 표시 실패'}
+ Set-ReviewView $fixtureReview
  if($PreviewPath){Set-RuleRows $fixtureRules}
  Write-UiPreview $form $PreviewPath;Write-Output 'CORRECTIONS_UI_OK';$form.Dispose();$timer.Dispose();return
 }

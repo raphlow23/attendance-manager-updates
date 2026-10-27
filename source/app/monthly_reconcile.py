@@ -14,6 +14,7 @@ from datetime import date, datetime
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
+from selenium.common.exceptions import TimeoutException
 
 from attendance_recovery import AttendancePage, parse_time, is_blank_time
 
@@ -235,7 +236,7 @@ def apply_plan(app, page, plan, month, background=False):
         try:
             if page.correct(day, targets, change['before']) is not True:
                 raise RuntimeError('사이트 저장 확인 결과가 없습니다.')
-        except Exception:
+        except Exception as error:
             with app.file_lock('state'):
                 state = app.load_json(app.STATE_FILE, {})
                 submitted = getattr(getattr(page,'driver',None),'_workday_write_submitted',True)
@@ -243,6 +244,8 @@ def apply_plan(app, page, plan, month, background=False):
                 if submitted is False:
                     state['day_rules'][key]['manual_hold'] = False
                 app.save_json(app.STATE_FILE, state)
+            error.completed_changes=list(completed)
+            error.failed_date=key
             raise
         with app.file_lock('state'):
             state = app.load_json(app.STATE_FILE, {})
@@ -277,18 +280,24 @@ def _settings(app):
 
 def _connect(app,settings):
     driver=app.create_driver()
+    phase='로그인 페이지 열기'
     try:
         driver.set_page_load_timeout(45);driver.get(app.SITE_URL);app.check_site_response(driver)
         wait=WebDriverWait(driver,20)
+        phase='로그인 입력 화면 확인'
         wait.until(EC.visibility_of_element_located((By.NAME,'iduser'))).send_keys(settings['id'])
         driver.find_element(By.NAME,'pass').send_keys(settings['pw'])
         driver.find_element(By.CSS_SELECTOR,'button[type="submit"]').click()
+        phase='로그인 후 근태관리 메뉴 확인'
         wait.until(EC.element_to_be_clickable((By.LINK_TEXT,'근태관리')))
+        phase='근태관리 화면 열기'
         page=AttendancePage(driver,date.today());page.open()
         return driver,page
-    except Exception:
+    except Exception as error:
         try:app.check_site_response(driver)
         finally:driver.quit()
+        if isinstance(error,TimeoutException):
+            raise RuntimeError(f'{phase}: 제한 시간 안에 화면을 확인하지 못했습니다. 근태 수정 저장은 시작하지 않았습니다.') from error
         raise
 
 
@@ -391,6 +400,7 @@ def apply_reviewed(app,job):
             changes={k:_clock(v) for k,v in after.items() if parsed[k]!=parse_time(entry['before'][k])}
             selected.append(dict(date=key,before=entry['before'],after=changes,reason='사용자 목록 확인 · '+entry['reason']))
         driver,page=_connect(app,settings)
+        applying=False;completed=[]
         try:
             # Check every selected snapshot before the first write.
             for item in selected:
@@ -400,7 +410,8 @@ def apply_reviewed(app,job):
             with app.file_lock('state'):
                 state=app.load_json(app.STATE_FILE,{});state['monthly_review']['consumed']=True;app.save_json(app.STATE_FILE,state)
             changed=[item for item in selected if item['after']]
-            apply_plan(app,page,{'changes':changed},review['month'])
+            applying=True
+            completed=apply_plan(app,page,{'changes':changed},review['month'])
             for item in selected:
                 if not item['after']:
                     with app.file_lock('state'):
@@ -413,11 +424,28 @@ def apply_reviewed(app,job):
                                 state.setdefault('runs',{}).setdefault(item['date'],{}).setdefault(field,{}).update(status='success',target=datetime.combine(day,datetime.min.time()).replace(hour=value[0],minute=value[1]).isoformat(timespec='minutes'),origin='목록 확인 · 기존 시간 유지')
                         app.save_json(app.STATE_FILE,state)
             final_rows=_read_month(page,review['month'],date.today(),app.is_workday)
+            final_by_date={r['date']:r for r in final_rows}
+            for item in selected:
+                current=final_by_date[item['date']]
+                expected=dict(item['before'],**item['after'])
+                if any(parse_time(current[k])!=parse_time(expected[k]) for k in ('checkin','checkout')) or current['note']!=expected['note']:
+                    raise RuntimeError(f'{item["date"]}: 최종 월 조회 값이 선택한 시간과 일치하지 않습니다. 완료 처리하지 않습니다.')
+                item['status']='저장 확인 완료' if item['after'] else '기존 시간 일치 · 변경 없음'
             from attendance_changes import summarize_month
             summary=summarize_month(final_rows,dict(settings,monthly_overtime_hours=review['target_days'],daily_overtime_hours=1),app.is_workday)
             return dict(ok=True,rows=selected,all_rows=final_rows,target_days=review['target_days'],
-                        message=f'선택 {len(selected)}건 정리 완료 · 시간 변경 {len(changed)}건 · 연장 기록 {summary["recorded_days"]}/{review["target_days"]}일')
-        except Exception:
-            app.check_site_response(driver);raise
+                        message=f'정리 완료: 선택 {len(selected)}건 사이트 확인 완료 · 시간 변경 {len(changed)}건 · 연장 기록 {summary["recorded_days"]}/{review["target_days"]}일')
+        except Exception as error:
+            if not applying:
+                app.check_site_response(driver);raise
+            completed=getattr(error,'completed_changes',completed)
+            saved={r['date'] for r in completed}
+            failed=getattr(error,'failed_date',None)
+            for item in selected:
+                item['status']='개별 저장 확인 · 최종 재조회 필요' if item['date'] in saved else '저장 실패 · 재조회 필요' if item['date']==failed else '미처리 · 재조회 필요'
+            detail=str(error).strip() or type(error).__name__
+            app.log_event(f'월 선택 정리 중단 · 개별 저장 확인 {len(saved)}건: {detail}')
+            return dict(ok=False,error=f'전체 정리가 완료되지 않았습니다. 개별 저장 확인 {len(saved)}건. {detail}',
+                        rows=selected,all_rows=review['rows'],target_days=review['target_days'],message='정리 실패 · 아래 원인과 날짜별 상태를 확인한 뒤 다시 조회하세요.')
         finally:driver.quit()
 
