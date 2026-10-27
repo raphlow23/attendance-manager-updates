@@ -70,7 +70,7 @@ function Set-UiTheme($Window) {
     Set-WorkdayTaskbarWindow $Window
     $iconPath = Join-Path $PSScriptRoot 'attendance.ico'
     if (Test-Path -LiteralPath $iconPath) { $Window.Icon = New-Object Drawing.Icon($iconPath) }
-    elseif (Test-Path -LiteralPath (Join-Path $PSScriptRoot '근태매니저.exe')) { $Window.Icon = [Drawing.Icon]::ExtractAssociatedIcon((Join-Path $PSScriptRoot '근태매니저.exe')) }
+    elseif (Test-Path -LiteralPath (Join-Path $PSScriptRoot '출근정리.exe')) { $Window.Icon = [Drawing.Icon]::ExtractAssociatedIcon((Join-Path $PSScriptRoot '출근정리.exe')) }
     $script:UiBackground = [Drawing.ColorTranslator]::FromHtml('#ECEEF3')
     $script:UiInk = [Drawing.ColorTranslator]::FromHtml('#343C46')
     $script:UiCyan = [Drawing.ColorTranslator]::FromHtml('#4BAFC9')

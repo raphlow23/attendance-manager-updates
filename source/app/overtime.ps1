@@ -14,7 +14,7 @@ $script:scanMonth = $null
 $script:operation = $null
 
 $form = New-Object Windows.Forms.Form
-$form.Text = '근태매니저 — 시간외근무 신청'
+$form.Text = '출근정리 — 시간외근무 신청'
 $form.Size = New-Object Drawing.Size(1080, 650)
 $form.MinimumSize = New-Object Drawing.Size(960, 600)
 $form.StartPosition = 'CenterScreen'
@@ -223,9 +223,9 @@ if ($SelfTest) {
         Write-UiPreview $form $PreviewPath
     }
     Write-Output 'OVERTIME_UI_OK: current-month default, 8 columns, no login/submission executed'
-    $form.Dispose(); $timer.Dispose(); $calendarTimer.Dispose(); exit 0
+    $form.Dispose(); $timer.Dispose(); $calendarTimer.Dispose(); return
 }
 . (Join-Path $PSScriptRoot 'session.ps1')
-if (-not (Enter-WorkdayUi 'overtime')) { $form.Dispose(); $timer.Dispose(); exit 0 }
+if (-not (Enter-WorkdayUi 'overtime')) { $form.Dispose(); $timer.Dispose(); return }
 try { Show-WorkdayDialog $form $OwnerHandle } finally { Exit-WorkdayUi }
 $timer.Dispose()

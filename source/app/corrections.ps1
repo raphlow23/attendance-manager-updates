@@ -7,7 +7,7 @@ Add-Type -AssemblyName System.Drawing
 $dataRoot=Join-Path $PSScriptRoot 'dist'
 $script:worker=$null; $script:snapshot=@{}; $script:jobPath=$null
 $form=New-Object Windows.Forms.Form
-$form.Text='근태매니저 — 휴가·연장 제외일 및 근태 정정'
+$form.Text='출근정리 — 휴가·연장 제외일 및 근태 정정'
 $form.Size=New-Object Drawing.Size(1050,880)
 $form.StartPosition='CenterScreen'; $form.FormBorderStyle='FixedDialog'; $form.MaximizeBox=$false
 $form.Font=New-Object Drawing.Font('Malgun Gothic',10)
@@ -276,9 +276,9 @@ if($SelfTest){
  [void]$clearDates.GetType().GetMethod('OnClick',[Reflection.BindingFlags]'Instance,NonPublic').Invoke($clearDates,@([EventArgs]::Empty));if($script:chosenDates.Count -ne 0){throw '달력 선택 해제 실패'}
  $script:calendarMonth=[DateTime]'2026-10-01'
  if($PreviewPath){Set-RuleRows $fixtureRules}
- Write-UiPreview $form $PreviewPath;Write-Output 'CORRECTIONS_UI_OK';$form.Dispose();$timer.Dispose();exit 0
+ Write-UiPreview $form $PreviewPath;Write-Output 'CORRECTIONS_UI_OK';$form.Dispose();$timer.Dispose();return
 }
 Read-Rule
 try{Refresh-RuleList}catch{$status.Text='저장된 제외일 목록을 읽지 못했습니다. '+$_.Exception.Message}
-if(-not (Enter-WorkdayUi 'corrections')){$form.Dispose();$timer.Dispose();exit 0}
+if(-not (Enter-WorkdayUi 'corrections')){$form.Dispose();$timer.Dispose();return}
 try { Show-WorkdayDialog $form $OwnerHandle } finally {Exit-WorkdayUi;$timer.Dispose()}

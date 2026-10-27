@@ -4,9 +4,9 @@ using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
-[assembly: AssemblyTitle("근태매니저")]
-[assembly: AssemblyProduct("근태매니저")]
-[assembly: AssemblyVersion("1.18.0.0")]
+[assembly: AssemblyTitle("출근정리")]
+[assembly: AssemblyProduct("출근정리")]
+[assembly: AssemblyVersion("1.19.0.0")]
 public sealed class WorkdayWindowOwner : IWin32Window {
     public IntPtr Handle { get; private set; }
     public WorkdayWindowOwner(long handle) { Handle = new IntPtr(handle); }
@@ -52,7 +52,7 @@ public sealed class WorkdayWindowOwner : IWin32Window {
             // Set relaunch information before the explicit per-window AppID.
             SetString(store, 2, "\"" + executable + "\"");
             SetString(store, 3, executable + ",0");
-            SetString(store, 4, "\uADFC\uD0DC\uB9E4\uB2C8\uC800");
+            SetString(store, 4, "\uCD9C\uADFC\uC815\uB9AC");
             SetString(store, 5, "Raphlow.AttendanceManager");
         } finally { Marshal.ReleaseComObject(store); }
     }
@@ -106,7 +106,7 @@ public static class WorkdayLauncher {
             }
             return 0;
         } catch (Exception error) {
-            MessageBox.Show(error.Message, "근태매니저 실행 확인", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(error.Message, "출근정리 실행 확인", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return 1;
         }
     }

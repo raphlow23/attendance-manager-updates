@@ -1,0 +1,22 @@
+Attendance Manager portable source installer
+Package date: 2026-10-27-r19
+Runtime: CPython 3.12.10 official embeddable 64-bit package
+Check-in: 08:30-08:55, 5-minute steps
+Checkout: 18:00-18:55, 5-minute steps
+Monthly overtime hours: configurable (default 10)
+Daily overtime units: 1 or 2; overtime day count = monthly hours / daily units
+1-hour window: 19:00-19:55; 2-hour window: 19:00-20:55; 5-minute steps
+Windows user logon: check-in immediately, then wait for the existing checkout target
+Recover missing checkout at the next check-in using the same persisted target
+Check-in at/after 09:00: correct to 08:30-08:50 in 5-minute steps
+Existing attendance records and notes are preserved except the requested correction
+No server hosting or subscription required
+Validation: offline tests passed; live-site integration pending
+Feature launcher: automatic attendance or monthly overtime applications
+Overtime: actual selected-month checkout records; department Center; user-entered purposes
+Application time: 18:00 to checkout hour floored (19:00 or 20:00)
+Dashboard styling: charcoal, cyan, mint and orange cards
+Resident worker + separate Windows EXE guardian; bounded restart, health and network state
+Intentional stop flag; duplicate prevention; security diagnostics without policy changes
+Public update channel: https://github.com/raphlow23/attendance-manager-updates
+Live signed code update and user-data preservation test passed

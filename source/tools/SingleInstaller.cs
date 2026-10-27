@@ -8,9 +8,9 @@ using System.Reflection;
 using System.Security.Cryptography;
 using System.Threading;
 using System.Windows.Forms;
-[assembly: AssemblyTitle("근태매니저 설치")]
-[assembly: AssemblyProduct("근태매니저")]
-[assembly: AssemblyVersion("1.18.0.0")]
+[assembly: AssemblyTitle("출근정리 설치")]
+[assembly: AssemblyProduct("출근정리")]
+[assembly: AssemblyVersion("1.19.0.0")]
 
 public static class AttendanceSetup {
     const string ExpectedHash = "__PAYLOAD_SHA256__";
@@ -40,7 +40,7 @@ public static class AttendanceSetup {
             total += entry.Length;
             if (entry.Length > 256L * 1024 * 1024 || total > 512L * 1024 * 1024) throw new InvalidDataException("설치 데이터 크기가 올바르지 않습니다.");
         }
-        foreach (string file in new [] {"gui-install.ps1", "install.ps1", "MANIFEST-SHA256.txt", "app/근태매니저.exe", "app/제거.exe", "app/uninstall.ps1"})
+        foreach (string file in new [] {"gui-install.ps1", "install.ps1", "MANIFEST-SHA256.txt", "app/출근정리.exe", "app/제거.exe", "app/uninstall.ps1"})
             if (!names.Contains(file)) throw new InvalidDataException("필수 설치 파일이 없습니다: " + file);
     }
     static void Extract(string destination) {
@@ -85,8 +85,8 @@ public static class AttendanceSetup {
             }
             if (args.Length != 0) return 2;
             Application.EnableVisualStyles();
-            var form = new Form { Text="근태매니저 설치", ClientSize=new Size(450,155), StartPosition=FormStartPosition.CenterScreen, FormBorderStyle=FormBorderStyle.FixedDialog, MaximizeBox=false, MinimizeBox=false, ControlBox=false, BackColor=Color.FromArgb(236,238,243) };
-            var label = new Label { Text="근태매니저 설치를 준비하고 있습니다.", AutoSize=false, Location=new Point(28,25), Size=new Size(400,40), Font=new Font("Malgun Gothic",11) };
+            var form = new Form { Text="출근정리 설치", ClientSize=new Size(450,155), StartPosition=FormStartPosition.CenterScreen, FormBorderStyle=FormBorderStyle.FixedDialog, MaximizeBox=false, MinimizeBox=false, ControlBox=false, BackColor=Color.FromArgb(236,238,243) };
+            var label = new Label { Text="출근정리 설치를 준비하고 있습니다.", AutoSize=false, Location=new Point(28,25), Size=new Size(400,40), Font=new Font("Malgun Gothic",11) };
             var progress = new ProgressBar { Location=new Point(28,90), Size=new Size(395,22), Style=ProgressBarStyle.Marquee };
             form.Controls.Add(label); form.Controls.Add(progress);
             Exception failure = null; int exitCode = 1;
@@ -105,7 +105,7 @@ public static class AttendanceSetup {
             if (failure != null) throw failure;
             return exitCode;
         } catch (Exception error) {
-            if (!diagnostic) MessageBox.Show(error.Message, "근태매니저 설치 확인", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            if (!diagnostic) MessageBox.Show(error.Message, "출근정리 설치 확인", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return 1;
         }
     }

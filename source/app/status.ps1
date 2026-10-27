@@ -3,7 +3,7 @@ param([switch]$SelfTest, [long]$OwnerHandle = 0)
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 $form = New-Object Windows.Forms.Form
-$form.Text = '근태매니저 — 상태 및 오류 로그'
+$form.Text = '출근정리 — 상태 및 오류 로그'
 $form.Size = New-Object Drawing.Size(960, 700)
 $form.StartPosition = 'CenterScreen'
 $form.Font = New-Object Drawing.Font('Malgun Gothic', 10)
@@ -49,6 +49,6 @@ function Update-WorkdayStatus {
 $refresh.Add_Click({ Update-WorkdayStatus })
 . (Join-Path $PSScriptRoot 'theme.ps1'); Set-UiTheme $form
 Update-WorkdayStatus
-if ($SelfTest) { Write-Output 'STATUS_UI_OK: liveness/connectivity/login verification distinguished'; $form.Dispose(); exit 0 }
+if ($SelfTest) { Write-Output 'STATUS_UI_OK: liveness/connectivity/login verification distinguished'; $form.Dispose(); return }
 . (Join-Path $PSScriptRoot 'session.ps1')
 Show-WorkdayDialog $form $OwnerHandle

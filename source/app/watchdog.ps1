@@ -38,7 +38,7 @@ $notices[$today] = ($failures -join ' / ')
 $icon = New-Object Windows.Forms.NotifyIcon
 $icon.Icon = [Drawing.SystemIcons]::Warning
 $icon.Visible = $true
-$icon.BalloonTipTitle = '근태매니저 — 자동 처리 확인 필요'
+$icon.BalloonTipTitle = '출근정리 — 자동 처리 확인 필요'
 $icon.BalloonTipText = (($failures -join ', ') + '. 프로그램과 실행 로그를 확인해 주세요.')
 $icon.BalloonTipIcon = 'Warning'
 $icon.ShowBalloonTip(12000)

@@ -19,9 +19,9 @@ $t.Interval=180
 $t.Add_Tick({$f.Close()})
 $f.Add_Shown({[IO.File]::WriteAllText((Join-Path $PSScriptRoot 'shown.json'),(@{pid=$PID;thread=[Threading.Thread]::CurrentThread.ManagedThreadId;shown=[DateTime]::UtcNow.Ticks}|ConvertTo-Json));$t.Start()})
 try{[void]$f.ShowDialog()}finally{$t.Dispose();$f.Dispose()}
-exit 0
+return
 '@
-foreach($name in @('control.ps1','overtime.ps1','status.ps1','보안안내.ps1')){[IO.File]::WriteAllText((Join-Path $fixture $name),$source)}
+foreach($name in @('control.ps1','corrections.ps1','overtime.ps1','status.ps1','보안안내.ps1')){[IO.File]::WriteAllText((Join-Path $fixture $name),$source)}
 $hosts=New-WorkdayFeatureHosts $fixture
 try {
  $deadline=[DateTime]::UtcNow.AddSeconds(15)
@@ -31,7 +31,7 @@ try {
   Start-Sleep -Milliseconds 10
  }
  $times=@();$threads=@()
- foreach($name in @('control.ps1','control.ps1','overtime.ps1','status.ps1','보안안내.ps1')){
+ foreach($name in @('control.ps1','control.ps1','corrections.ps1','overtime.ps1','status.ps1','보안안내.ps1')){
   Remove-Item (Join-Path $fixture 'shown.json') -ErrorAction SilentlyContinue
   $start=[DateTime]::UtcNow
   Open-WorkdayFeatureHost $hosts $name 0

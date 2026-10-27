@@ -12,7 +12,7 @@ try {
     Assert-AttendanceInstallRoot $PSScriptRoot
     $plan = Get-AttendanceInstallPlan $PSScriptRoot
     if (-not $Silent) {
-        $answer = [Windows.Forms.MessageBox]::Show("근태매니저를 제거할까요?`n`n자동 실행/감시 프로세스, 예약 작업 4개, 바로가기, 계정과 실행 기록을 모두 삭제합니다.", '근태매니저 제거', 'YesNo', 'Question')
+        $answer = [Windows.Forms.MessageBox]::Show("출근정리를 제거할까요?`n`n자동 실행/감시 프로세스, 예약 작업 4개, 바로가기, 계정과 실행 기록을 모두 삭제합니다.", '출근정리 제거', 'YesNo', 'Question')
         if ($answer -ne 'Yes') { exit 0 }
     }
     $data = Join-Path $plan.Root 'dist'
@@ -60,7 +60,7 @@ try {
         if (-not (Get-Process -Id __PARENT__ -ErrorAction SilentlyContinue)) { break }
         Start-Sleep -Milliseconds 250
     }
-    foreach ($name in @('근태매니저.lnk','Workday 출퇴근관리.lnk')) {
+    foreach ($name in @('출근정리.lnk','근태매니저.lnk','Workday 출퇴근관리.lnk')) {
         $path = Join-Path ([Environment]::GetFolderPath('Desktop')) $name
         if (Test-Path -LiteralPath $path) {
             $shell = New-Object -ComObject WScript.Shell
@@ -78,7 +78,7 @@ try {
         } catch { if ($attempt -eq 19) { throw }; Start-Sleep -Milliseconds 500 }
     }
     if (Test-Path -LiteralPath '__REGISTRY__') { Remove-Item -LiteralPath '__REGISTRY__' -Force }
-    if (-not __SILENT__) { [void][Windows.Forms.MessageBox]::Show('근태매니저와 자동 실행/예약 작업을 제거했습니다.', '제거 완료', 'OK', 'Information') }
+    if (-not __SILENT__) { [void][Windows.Forms.MessageBox]::Show('출근정리와 자동 실행/예약 작업을 제거했습니다.', '제거 완료', 'OK', 'Information') }
 } catch { [void][Windows.Forms.MessageBox]::Show(('제거를 완료하지 못했습니다. ' + $_.Exception.Message), '제거 확인', 'OK', 'Warning') }
 finally { Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue }
 '@
@@ -88,6 +88,6 @@ finally { Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force -ErrorAct
     [IO.File]::WriteAllText($cleanup, $cleanupText, (New-Object Text.UTF8Encoding($true)))
     Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -ArgumentList @('-NoProfile','-STA','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',"`"$cleanup`"") -WindowStyle Hidden
 } catch {
-    [void][Windows.Forms.MessageBox]::Show($_.Exception.Message, '근태매니저 제거 실패', 'OK', 'Error')
+    [void][Windows.Forms.MessageBox]::Show($_.Exception.Message, '출근정리 제거 실패', 'OK', 'Error')
     exit 1
 }

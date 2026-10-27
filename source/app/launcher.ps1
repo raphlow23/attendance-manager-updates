@@ -4,14 +4,14 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 $form = New-Object Windows.Forms.Form
-$form.Text = '근태매니저'
+$form.Text = '출근정리'
 $form.Size = New-Object Drawing.Size(860, 550)
 $form.StartPosition = 'CenterScreen'
 $form.FormBorderStyle = 'FixedDialog'
 $form.MaximizeBox = $false
 $form.Font = New-Object Drawing.Font('Malgun Gothic', 10)
 $title = New-Object Windows.Forms.Label
-$title.Text = 'ATTENDANCE MANAGER  |  근태매니저'
+$title.Text = 'ATTENDANCE MANAGER  |  출근정리'
 $title.Location = New-Object Drawing.Point(0, 0)
 $title.Size = New-Object Drawing.Size(845, 76)
 $title.Padding = New-Object Windows.Forms.Padding(30, 0, 0, 0)

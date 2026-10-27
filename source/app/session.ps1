@@ -42,7 +42,8 @@ function Initialize-WorkdayWindows {
         return
     }
     # Load the precompiled helper from bytes so updates can replace the EXE.
-    $helper = Join-Path $PSScriptRoot '근태매니저.exe'
+    $helper = Join-Path $PSScriptRoot '출근정리.exe'
+    if (-not (Test-Path -LiteralPath $helper)) { $helper = Join-Path $PSScriptRoot '근태매니저.exe' }
     if (Test-Path -LiteralPath $helper) {
         $assembly = [Reflection.Assembly]::Load([IO.File]::ReadAllBytes($helper))
         if (-not $assembly.GetType('WorkdayWindowOwner')) { $assembly = $null }
@@ -97,7 +98,7 @@ public sealed class WorkdayWindowOwner : IWin32Window {
             // Set relaunch information before the explicit per-window AppID.
             SetString(store, 2, "\"" + executable + "\"");
             SetString(store, 3, executable + ",0");
-            SetString(store, 4, "\uADFC\uD0DC\uB9E4\uB2C8\uC800");
+            SetString(store, 4, "\uCD9C\uADFC\uC815\uB9AC");
             SetString(store, 5, "Raphlow.AttendanceManager");
         } finally { Marshal.ReleaseComObject(store); }
     }
@@ -137,7 +138,7 @@ public sealed class WorkdayWindowOwner : IWin32Window {
 }
 function Set-WorkdayTaskbarWindow($Window) {
     Initialize-WorkdayWindows
-    $executable = Join-Path $PSScriptRoot '근태매니저.exe'
+    $executable = Join-Path $PSScriptRoot '출근정리.exe'
     # Source-only test fixtures do not contain the native launcher.
     if (-not (Test-Path -LiteralPath $executable)) { return }
     $create = {

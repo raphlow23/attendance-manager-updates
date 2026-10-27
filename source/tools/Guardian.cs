@@ -167,7 +167,7 @@ public static class WorkdayGuardian {
                 Log("guardian started");
                 if (!testing && Array.IndexOf(args, "--show-ui") >= 0) {
                     try {
-                        var ui = new ProcessStartInfo(Path.Combine(root, "근태매니저.exe"));
+                        var ui = new ProcessStartInfo(Path.Combine(root, "출근정리.exe"));
                         ui.UseShellExecute = false; ui.CreateNoWindow = true; Process.Start(ui);
                     } catch (Exception error) { Log("UI launch failure: " + error.Message); }
                 }

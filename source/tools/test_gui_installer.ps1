@@ -4,7 +4,7 @@ $fixture = Join-Path $root ('.test-data\gui-regression-' + [Guid]::NewGuid().ToS
 New-Item -ItemType Directory -Path (Join-Path $fixture 'app') -Force | Out-Null
 Copy-Item (Join-Path $root 'gui-install.ps1') $fixture
 Copy-Item (Join-Path $root 'app\theme.ps1') (Join-Path $fixture 'app')
-foreach ($name in @('session.ps1','attendance.ico','근태매니저.exe')) { Copy-Item (Join-Path $root ('app\'+$name)) (Join-Path $fixture 'app') }
+foreach ($name in @('session.ps1','attendance.ico','출근정리.exe')) { Copy-Item (Join-Path $root ('app\'+$name)) (Join-Path $fixture 'app') }
 $utf8 = New-Object Text.UTF8Encoding($true)
 foreach ($code in @(0,7)) {
     $mock = @'

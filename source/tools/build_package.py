@@ -4,11 +4,11 @@ from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
 ROOT = Path(__file__).resolve().parents[1]
-OUTPUT = ROOT / '근태매니저_설치패키지_2026-10-26.zip'
+OUTPUT = ROOT / '출근정리_설치패키지_2026-10-26.zip'
 ROOT_FILES = [
     '사용안내.txt', '설치하기.bat', '출퇴근관리.bat', 'gui-install.ps1',
     'install.cmd', 'install.ps1', 'requirements.txt', 'VERSION.txt',
-    'python-3.12.10-embed-amd64.zip', '설치.exe', '근태매니저.exe', '출퇴근관리.exe', '개발변경_설정_시험안내.md',
+    'python-3.12.10-embed-amd64.zip', '설치.exe', '출근정리.exe', '출퇴근관리.exe', '개발변경_설정_시험안내.md',
 ]
 
 
@@ -17,7 +17,8 @@ def build():
     files += list((ROOT / 'wheels').glob('*.whl'))
     files += [ROOT / 'app' / name for name in ('main.py', 'resident.py', 'attendance_recovery.py', 'overtime_requests.py', 'control.ps1', 'launcher.ps1', 'overtime.ps1', 'theme.ps1', 'session.ps1', 'status.ps1', '출퇴근관리.bat', '출퇴근관리.exe', 'WorkdayGuard.exe', 'watchdog.ps1', 'notify.ps1', '보안안내.ps1', 'update.ps1', 'update-settings.ps1', 'update-config.json', 'update-public.xml', 'release-version.txt')]
     files += [p for p in (ROOT / 'app' / 'driver').rglob('*') if p.is_file()]
-    files.append(ROOT / 'app' / '근태매니저.exe')
+    files.append(ROOT / 'app' / '출근정리.exe')
+    files += [ROOT / '근태매니저.exe', ROOT / 'app' / '근태매니저.exe']
     files.append(ROOT / 'app' / 'attendance.ico')
     files += [ROOT / 'app' / name for name in ('ui-host.ps1', 'task-control.ps1', 'attendance_changes.py', 'corrections.ps1')]
     files += [ROOT / 'app' / name for name in ('install-integration.ps1','uninstall.ps1','제거.exe')]

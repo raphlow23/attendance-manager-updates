@@ -21,7 +21,7 @@ $resultLog = Join-Path $logRoot ("install-$stamp.result.log")
 $utf8 = New-Object Text.UTF8Encoding($false)
 
 $form = New-Object Windows.Forms.Form
-$form.Text = "근태매니저 설치"
+$form.Text = "출근정리 설치"
 $form.Size = New-Object Drawing.Size(430, 185)
 $form.StartPosition = "CenterScreen"
 $form.FormBorderStyle = "FixedDialog"
@@ -97,13 +97,13 @@ try {
     [void](Register-AttendanceInstall $InstallRoot)
     try {
         $shell = New-Object -ComObject WScript.Shell
-        $shortcut = $shell.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) '근태매니저.lnk'))
-        $shortcut.TargetPath = Join-Path $InstallRoot '근태매니저.exe'
+        $shortcut = $shell.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) '출근정리.lnk'))
+        $shortcut.TargetPath = Join-Path $InstallRoot '출근정리.exe'
         $shortcut.WorkingDirectory = $InstallRoot
-        $shortcut.IconLocation = (Join-Path $InstallRoot '근태매니저.exe') + ',0'
+        $shortcut.IconLocation = (Join-Path $InstallRoot '출근정리.exe') + ',0'
         $shortcut.Save()
         Initialize-WorkdayWindows
-        [WorkdayWindowOwner]::SetShortcutAppId((Join-Path ([Environment]::GetFolderPath('Desktop')) '근태매니저.lnk'))
+        [WorkdayWindowOwner]::SetShortcutAppId((Join-Path ([Environment]::GetFolderPath('Desktop')) '출근정리.lnk'))
     } catch { Write-Warning '바탕화면 바로가기를 만들지 못했습니다. 설치 폴더의 출퇴근관리.exe를 실행해 주세요.' }
     $detail.Text = "설정 및 관리 창을 여는 중입니다."
     [Windows.Forms.Application]::DoEvents()

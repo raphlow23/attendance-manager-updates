@@ -3,7 +3,7 @@ param([switch]$SelfTest)
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 $form = New-Object Windows.Forms.Form
-$form.Text = '근태매니저 — 자동 업데이트'
+$form.Text = '출근정리 — 자동 업데이트'
 $form.Size = New-Object Drawing.Size(720, 310)
 $form.StartPosition = 'CenterScreen'
 $form.Font = New-Object Drawing.Font('Malgun Gothic', 10)

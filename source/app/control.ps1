@@ -20,7 +20,7 @@ if (Test-Path -LiteralPath $SettingsFile) {
 }
 
 $form = New-Object Windows.Forms.Form
-$form.Text = "근태매니저 — 근태 자동관리"
+$form.Text = "출근정리 — 근태 자동관리"
 $form.Size = New-Object Drawing.Size(470, 850)
 $form.AutoScroll = $true
 $form.StartPosition = "CenterScreen"
@@ -268,9 +268,9 @@ if ($SelfTest) {
     }
     Write-Output "CONTROL_UI_OK: monthly=$($monthlyBox.Value), daily=$($dailyBox.SelectedIndex + 1), $($status.Text)"
     $form.Dispose()
-    exit 0
+    return
 }
-if (-not (Enter-WorkdayUi 'control')) { $form.Dispose(); exit 0 }
+if (-not (Enter-WorkdayUi 'control')) { $form.Dispose(); return }
 $script:TaskContext=New-WorkdayTaskContext
 $script:TaskJob=$null; $script:QueuedOperation=$null
 $taskTimer=New-Object Windows.Forms.Timer

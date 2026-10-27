@@ -3,7 +3,7 @@ param([switch]$SelfTest, [long]$OwnerHandle = 0)
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 $form = New-Object Windows.Forms.Form
-$form.Text = '근태매니저 — 실행 차단 및 보안 안내'
+$form.Text = '출근정리 — 실행 차단 및 보안 안내'
 $form.Size = New-Object Drawing.Size(760, 545)
 $form.StartPosition = 'CenterScreen'
 $form.Font = New-Object Drawing.Font('Malgun Gothic', 10)
@@ -47,6 +47,6 @@ $folder.Add_Click({ Start-Process 'explorer.exe' -ArgumentList "`"$PSScriptRoot`
 $form.Controls.Add($folder)
 . (Join-Path $PSScriptRoot 'theme.ps1')
 Set-UiTheme $form
-if ($SelfTest) { Write-Output 'SECURITY_HELP_UI_OK: no exclusions or firewall changes'; $form.Dispose(); exit 0 }
+if ($SelfTest) { Write-Output 'SECURITY_HELP_UI_OK: no exclusions or firewall changes'; $form.Dispose(); return }
 . (Join-Path $PSScriptRoot 'session.ps1')
 Show-WorkdayDialog $form $OwnerHandle
