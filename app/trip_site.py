@@ -93,19 +93,21 @@ class TripPage:
                         break
                     if len(links)>1:break
         return one(matches,'출장일지 메뉴') if matches else False
+    def text_fields(self,form,keyword):
+        return visible(form.find_elements(By.XPATH,f".//input[contains(@placeholder,'{keyword}')] | .//textarea[contains(@placeholder,'{keyword}')] | .//tr[./td[string-length(normalize-space(.))<15 and contains(translate(normalize-space(.),' ',''),'{keyword}')] or ./th[contains(translate(normalize-space(.),' ',''),'{keyword}')]]//*[self::input or self::textarea][not(@type='hidden') and not(@type='submit') and not(@type='button')]"))
     def form(self):
-        forms=visible(self.driver.find_elements(By.XPATH,"//form[.//input[contains(@placeholder,'출장목적')] or .//textarea[contains(@placeholder,'출장목적')]]"))
-        return one(forms,'출장 등록 폼') if forms else False
+        forms=[f for f in visible(self.driver.find_elements(By.TAG_NAME,'form')) if self.text_fields(f,'출장장소') and self.text_fields(f,'출장목적')]
+        return one(forms,'출장 등록·수정 폼') if forms else False
     def fields(self):
         form=self.form()
         if not form:raise RuntimeError('출장 등록 폼을 찾지 못했습니다.')
         selects=visible(form.find_elements(By.TAG_NAME,'select'))
         texts=visible(form.find_elements(By.CSS_SELECTOR,"input:not([type='hidden']):not([type='submit']):not([type='button']), textarea"))
-        place=one([i for i in texts if '출장장소' in (i.get_attribute('placeholder') or '')],'출장장소 입력칸')
-        purpose=one([i for i in texts if '출장목적' in (i.get_attribute('placeholder') or '')],'출장목적 입력칸')
+        place=one(self.text_fields(form,'출장장소'),'출장장소 입력칸')
+        purpose=one(self.text_fields(form,'출장목적'),'출장목적 입력칸')
         dates=[i for i in texts if i not in (place,purpose)]
         if len(selects)!=6 or len(dates)!=3:raise RuntimeError('출장 등록 날짜·시간 입력칸 구조가 제공된 화면과 다릅니다. HTML 확인이 필요합니다.')
-        submit=one([b for b in form.find_elements(By.CSS_SELECTOR,'button, input') if label(b) in ('확인','출장등록','출장 등록','수정','수정하기','출장 수정','출장 수정하기','수정완료')],'출장 확인 버튼')
+        submit=one([b for b in form.find_elements(By.CSS_SELECTOR,'button, input') if norm(label(b)) in ('확인','출장등록','수정','수정하기','출장수정','출장수정하기','출장일지수정','수정완료')],'출장 확인 버튼')
         return form,selects,dates,place,purpose,submit
     def check_options(self):
         _,selects,_,_,_,_=self.fields()
@@ -152,14 +154,17 @@ class TripPage:
         return result
     def submit(self,row,month,update=False):
         self.driver._workday_write_submitted=False
+        self.phase='기존 출장 행 확인' if update else '신규 출장 입력 폼 확인'
         if update:
             matches=[r for r in self.existing(month,True) if r['date']==row['date']]
             record=one([r['element'] for r in matches],'수정할 기존 출장')
             original=matches[0]
             controls=visible(record.find_elements(By.CSS_SELECTOR,"a, button, input[type='button'], input[type='submit']"))
             edit=one([c for c in controls if norm(label(c)) in ('수정','수정하기','출장수정','출장수정하기')],'기존 출장 수정 버튼')
+            self.phase='기존 출장 수정 입력 화면 열기'
             self.activate(edit)
             self.wait.until(lambda _:self.form())
+        self.phase='출장 입력값·저장 대상 확인'
         form,selects,dates,place,purpose,button=self.fields()
         action=form.get_attribute('action');source=urlsplit(self.driver.current_url);target=urlsplit(action)
         if (source.scheme,source.netloc)!=(target.scheme,target.netloc):raise RuntimeError('출장 저장 사이트가 다릅니다.')
@@ -179,12 +184,14 @@ class TripPage:
         guard=getattr(self.driver,'_workday_before_write',None)
         if callable(guard):guard()
         self.driver._workday_expected_save_url=action;self.driver._workday_post_seen=False;self.driver._workday_save_response_status=None
+        self.phase='출장 저장 버튼 실행'
         self.driver._workday_write_submitted=True
         try:
             accepted=self.driver.execute_script('''const b=arguments[0],f=arguments[1];if(b.disabled||b.form!==f||!f.checkValidity())return false;b.click();return true;''',button,form)
             if accepted is False:
                 self.driver._workday_write_submitted=False;raise RuntimeError('출장 등록 폼 검증에서 제출을 거절했습니다.')
         except UnexpectedAlertPresentException:pass
+        self.phase='사이트 저장 결과 확인'
         def confirmed(_):
             try:self.driver.switch_to.alert.accept()
             except NoAlertPresentException:pass

@@ -202,7 +202,7 @@ def run_job(app,job):
     money(job.get('total',0))
     with app.file_lock('action',timeout=120):
         driver,page=_connect(app,settings)
-        submitted=[];attempted=False
+        submitted=[];attempted=False;active_date='';trips=None
         try:
             attendance=_read_month(page,month,date.today(),lambda day:True)
             with app.file_lock('state'):state=app.load_json(app.STATE_FILE,{})
@@ -260,11 +260,16 @@ def run_job(app,job):
             with app.file_lock('state'):
                 state=app.load_json(app.STATE_FILE,{});state['trip_review']['consumed']=True;app.save_json(app.STATE_FILE,state)
             for row in sorted(chosen,key=lambda r:r['date']):
-                key=row['date']
+                key=row['date'];active_date=key;driver._workday_write_submitted=False;trips.phase='기존 출장 중복·변경 확인'
                 matches=[e for e in trips.existing(month) if e['date']==key]
                 if row.get('is_existing'):
                     expected=[e for e in review['existing'] if e['date']==key]
                     if len(matches)!=1 or matches!=expected:raise ValueError(f'{key}: 기존 출장 내용이 달라져 수정을 중단합니다.')
+                    if all(' '.join(matches[0][field].split())==' '.join(row[field].split()) for field in ('location','purpose')):
+                        row['status']='기존 내용 동일 · 유지';submitted.append(key)
+                        with app.file_lock('state'):
+                            state=app.load_json(app.STATE_FILE,{});state.setdefault('trip_applications',{})[key]=dict(status='success',row=row,source='기존 동일 내용 확인');app.save_json(app.STATE_FILE,state)
+                        continue
                 elif matches:raise ValueError(f'{key}: 기존 출장이 있어 중복 등록을 중단합니다.')
                 with app.file_lock('state'):
                     state=app.load_json(app.STATE_FILE,{});state.setdefault('trip_applications',{})[key]=dict(status='sending',row=row,at=time.time());app.save_json(app.STATE_FILE,state)
@@ -275,21 +280,27 @@ def run_job(app,job):
                 with app.file_lock('state'):
                     state=app.load_json(app.STATE_FILE,{});state['trip_applications'][key]['status']='success';app.save_json(app.STATE_FILE,state)
                 app.log_event(f'{key} 출장 등록 확인 완료')
+            trips.phase='최종 출장 내역 합산 확인'
             final=trips.existing(month)
             final_amount=sum(v['amount'] for v in existing_totals(final).values())
             summary=summarize([],job['total'],final_amount)
             return dict(ok=True,rows=chosen,all_rows=make_rows(attendance,rules,final,date.today()),summary=summary,message=f'출장 {len(submitted)}일 등록·수정 확인 완료. '+summary['message'])
         except Exception as error:
             if operation!='submit' or not attempted:raise
+            phase=getattr(trips,'phase','출장 처리')
+            sent=getattr(driver,'_workday_write_submitted',True)
+            stage='저장 요청 후 확인 실패' if sent else '저장 버튼 실행 전 중단'
+            detail=app.user_job_error(error,f'{active_date or month} · {phase} · {stage}')
+            app.log_event(detail)
             with app.file_lock('state'):
                 state=app.load_json(app.STATE_FILE,{})
                 for item in chosen:
-                    if item['date'] in submitted:item['status']='등록 확인 완료'
+                    if item['date'] in submitted:item['status']=item.get('status','등록 확인 완료')
                     elif state.get('trip_applications',{}).get(item['date'],{}).get('status')=='sending':
                         sent=getattr(driver,'_workday_write_submitted',True)
                         state['trip_applications'][item['date']]['status']='uncertain' if sent else 'not_submitted'
                         item['status']='등록 결과 확인 필요' if sent else '저장 전 중단'
                     else:item['status']='미처리'
                 app.save_json(app.STATE_FILE,state)
-            return dict(ok=False,error=str(error),rows=chosen,message=f'등록 확인 {len(submitted)}일. 중단된 날짜를 확인하고 다시 조회하세요. 목표 미달이면 출장 추가가 필요합니다.')
+            return dict(ok=False,error=detail,rows=chosen,message=f'등록·수정 확인 {len(submitted)}일. 중단된 날짜를 확인하고 다시 조회하세요. 목표 미달이면 출장 추가가 필요합니다.')
         finally:driver.quit()

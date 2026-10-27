@@ -2,6 +2,7 @@ import sys,time,unittest
 from pathlib import Path
 from datetime import date
 from unittest.mock import patch,Mock
+from selenium.common.exceptions import TimeoutException
 sys.path[:0]=[str(Path(__file__).resolve().parents[1]/'app')]
 import business_trips as trips
 import main as app
@@ -174,6 +175,49 @@ class TripJobs(unittest.TestCase):
         self.assertEqual([r['date'] for r in result['rows'] if r['selected']],['2026-10-07'])
         self.assertEqual(result['rows'][0]['location'],'기존 장소')
         page.return_value.submit.assert_not_called()
+    def test_partial_failure_reports_date_phase_and_empty_timeout_before_post(self):
+        rows=self.prepare();driver=Mock()
+        for row in rows:row.update(location='장소',purpose='목적')
+        with patch('monthly_reconcile._connect',return_value=(driver,Mock())),patch('monthly_reconcile._read_month',return_value=rows),patch('trip_site.TripPage') as page:
+            page.return_value.existing.return_value=[]
+            def fail(*args,**kwargs):
+                page.return_value.phase='기존 출장 수정 입력 화면 열기'
+                driver._workday_write_submitted=False
+                raise TimeoutException()
+            page.return_value.submit.side_effect=fail
+            result=trips.run_job(app,dict(operation='submit',review_id='fixture',total=40000,rows=rows))
+        self.assertFalse(result['ok']);self.assertIn('2026-10-07',result['error']);self.assertIn('TimeoutException',result['error'])
+        self.assertIn('저장 버튼 실행 전',result['error']);self.assertIn('수정 입력 화면',result['error'])
+        self.assertNotIn('Message: None',result['error'])
+        self.assertEqual(app.load_json(app.STATE_FILE,{})['trip_applications']['2026-10-07']['status'],'not_submitted')
+        page.return_value.submit.assert_called_once()
+
+    def test_partial_failure_after_post_is_uncertain_and_does_not_submit_next_date(self):
+        rows=self.prepare();driver=Mock()
+        for row in rows:row.update(location='장소',purpose='목적')
+        with patch('monthly_reconcile._connect',return_value=(driver,Mock())),patch('monthly_reconcile._read_month',return_value=rows),patch('trip_site.TripPage') as page:
+            page.return_value.existing.return_value=[]
+            def fail(*args,**kwargs):
+                page.return_value.phase='사이트 저장 결과 확인'
+                driver._workday_write_submitted=True
+                raise TimeoutException()
+            page.return_value.submit.side_effect=fail
+            result=trips.run_job(app,dict(operation='submit',review_id='fixture',total=40000,rows=rows))
+        self.assertFalse(result['ok']);self.assertIn('저장 요청 후',result['error']);self.assertIn('사이트 저장 결과 확인',result['error'])
+        self.assertEqual(app.load_json(app.STATE_FILE,{})['trip_applications']['2026-10-07']['status'],'uncertain')
+        page.return_value.submit.assert_called_once()
+
+    def test_unchanged_existing_trip_does_not_open_edit_or_post(self):
+        self.prepare();saved=dict(date='2026-10-07',start='09:00',end='18:00',location='기존 장소',purpose='기존 목적')
+        rows=trips.make_rows([attendance('2026-10-07',ci='09:00')],{},[saved],date(2026,10,27))
+        state=app.load_json(app.STATE_FILE,{});state['trip_review'].update(rows=rows,existing=[saved],existing_amount=20000,rules={});state['day_rules']={};app.save_json(app.STATE_FILE,state)
+        driver=Mock()
+        with patch('monthly_reconcile._connect',return_value=(driver,Mock())),patch('monthly_reconcile._read_month',return_value=rows),patch('trip_site.TripPage') as page:
+            page.return_value.existing.return_value=[saved]
+            result=trips.run_job(app,dict(operation='submit',review_id='fixture',total=20000,rows=[dict(rows[0],selected=True)]))
+        self.assertTrue(result['ok']);self.assertEqual(result['rows'][0]['status'],'기존 내용 동일 · 유지')
+        page.return_value.submit.assert_not_called()
+
     def test_changed_rules_invalidate_the_review(self):
         rows=self.prepare();state=app.load_json(app.STATE_FILE,{});state['day_rules']={};app.save_json(app.STATE_FILE,state)
         with patch.object(app,'create_driver') as driver:

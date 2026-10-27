@@ -36,6 +36,9 @@ def trip_page(edit=None):
             a=form.index('<select name="'+name+'">');b=form.index('</select>',a)
             form=form[:a]+form[a:b].replace('value="'+str(value)+'"','value="'+str(value)+'" selected')+form[b:]
         form=form.replace('>확인</button>','>수정완료</button>')
+        for name,word,value in [('place','출장장소',saved['location']),('purpose','출장목적',saved['purpose'])]:
+            old=inp(name,value,'출장장소' if name=='place' else '출장목적을 구체적으로 입력하세요')
+            form=form.replace(old,'<table><tr><th>'+word+'</th><td>'+inp(name,value)+'</td></tr></table>')
     body=body.replace('</tr>','<td>EDIT</td></tr>')
     for index in range(len(trip_records)):body=body.replace('EDIT','<a href="/trip-edit?index='+str(index)+'">수정</a>',1)
     return NAV+'<h2>출장 등록하기</h2>'+form+'<h2>사용자님의 10월 출장일지</h2><table><thead><tr>'+heads+'</tr></thead><tbody>'+body+'</tbody></table>'
@@ -174,5 +177,5 @@ try:
      assert len(rejected)==1 and rejected[0]['status'].startswith('확인 필요:') and statuses[rows[0]['date']]['status']=='uncertain',rejected
      assert len(ot_records)==3 and ot_records[0]['purpose']=='수정한 새 근무목적'
     finally:driver.quit()
-   print('JOURNAL_BROWSER_OK: attendance month 10→9→10 with native clicks disabled; trip existing place/purpose loaded and updated with unchanged time / no duplicate; trip short-date history after POST verified / no duplicate; trip workflow + unchecked/blank-purpose exclusions and partial-budget warning + work-log direct form + user-supplied direct URL without menu links; overtime purpose absent from list / success page without history / observed-page refresh / two sequential POSTs / existing date purpose updated once / uncertain missing date added / detail purpose verified / no duplicate dates; no target-site requests')
+   print('JOURNAL_BROWSER_OK: attendance month 10→9→10 with native clicks disabled; trip edit form without placeholders matched by labels; trip existing place/purpose loaded and updated with unchanged time / no duplicate; trip short-date history after POST verified / no duplicate; trip workflow + unchecked/blank-purpose exclusions and partial-budget warning + work-log direct form + user-supplied direct URL without menu links; overtime purpose absent from list / success page without history / observed-page refresh / two sequential POSTs / existing date purpose updated once / uncertain missing date added / detail purpose verified / no duplicate dates; no target-site requests')
 finally:server.shutdown();server.server_close();thread.join()
