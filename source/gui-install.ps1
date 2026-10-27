@@ -100,7 +100,10 @@ try {
         $shortcut = $shell.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) '근태매니저.lnk'))
         $shortcut.TargetPath = Join-Path $InstallRoot '근태매니저.exe'
         $shortcut.WorkingDirectory = $InstallRoot
+        $shortcut.IconLocation = (Join-Path $InstallRoot '근태매니저.exe') + ',0'
         $shortcut.Save()
+        Initialize-WorkdayWindows
+        [WorkdayWindowOwner]::SetShortcutAppId((Join-Path ([Environment]::GetFolderPath('Desktop')) '근태매니저.lnk'))
     } catch { Write-Warning '바탕화면 바로가기를 만들지 못했습니다. 설치 폴더의 출퇴근관리.exe를 실행해 주세요.' }
     $detail.Text = "설정 및 관리 창을 여는 중입니다."
     [Windows.Forms.Application]::DoEvents()

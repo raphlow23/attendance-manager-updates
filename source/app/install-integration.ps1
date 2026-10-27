@@ -33,5 +33,19 @@ function Register-AttendanceInstall([string]$Root, [switch]$PlanOnly) {
     }
     foreach ($name in $values.Keys) { New-ItemProperty -LiteralPath $plan.RegistryKey -Name $name -Value $values[$name] -PropertyType String -Force | Out-Null }
     foreach ($name in @('NoModify','NoRepair')) { New-ItemProperty -LiteralPath $plan.RegistryKey -Name $name -Value 1 -PropertyType DWord -Force | Out-Null }
+    # Repair only our existing desktop shortcut; never rewrite pinned PowerShell
+    # shortcuts, which may also be used by other programs.
+    $desktopLink = Join-Path ([Environment]::GetFolderPath('Desktop')) '근태매니저.lnk'
+    if (Test-Path -LiteralPath $desktopLink) {
+        $shell = New-Object -ComObject WScript.Shell
+        $shortcut = $shell.CreateShortcut($desktopLink)
+        if ($shortcut.TargetPath -eq $plan.Executable) {
+            if ($shortcut.IconLocation -ne ($plan.Executable + ',0')) {
+                $shortcut.IconLocation = $plan.Executable + ',0'; $shortcut.Save()
+            }
+            Initialize-WorkdayWindows
+            [WorkdayWindowOwner]::SetShortcutAppId($desktopLink)
+        }
+    }
     return $plan
 }
