@@ -1,12 +1,15 @@
 """Semantic adapter for the user-supplied business-trip registration screen."""
 import re
 from datetime import date
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit,urlunsplit
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import Select,WebDriverWait
 from selenium.common.exceptions import NoAlertPresentException,UnexpectedAlertPresentException,StaleElementReferenceException,TimeoutException
 from attendance_recovery import visible,one,label,input_value
 from business_trips import CATEGORY,TRANSPORT
+
+# Explicit trip entry URL supplied by the user; do not infer it from menu labels.
+TRIP_ENTRY_URL='http://sappd.kr/sappd_g6.php'
 
 def norm(text):return re.sub(r'\s+','',text)
 
@@ -37,6 +40,16 @@ class TripPage:
             self.driver.get(href)
         else:self.driver.execute_script('arguments[0].click()',control)
     def open(self):
+        source=urlsplit(self.driver.current_url);target=urlsplit(TRIP_ENTRY_URL)
+        if source.hostname==target.hostname and source.port==target.port and source.scheme in ('http','https'):
+            # Keep the authenticated origin (including HTTPS when available).
+            entry=urlunsplit((source.scheme,source.netloc,target.path,target.query,''))
+            self.driver.get(entry)
+            current=urlsplit(self.driver.current_url)
+            if (current.scheme,current.netloc)!=(source.scheme,source.netloc):raise RuntimeError('출장 입력 주소에서 다른 사이트로 이동하여 중단했습니다.')
+            try:self.wait.until(lambda _:self.form())
+            except TimeoutException as error:raise RuntimeError('출장 입력 주소(sappd_g6.php)를 열었지만 입력 폼을 확인하지 못했습니다. 로그인 상태·접근 권한을 확인하세요.') from error
+            return
         self.activate(one(self.driver.find_elements(By.LINK_TEXT,'근무일지'),'근무일지 메뉴'))
         # The work-log tab may land directly on the trip form. Its active
         # tab can be a non-clickable label, so no second menu is required.

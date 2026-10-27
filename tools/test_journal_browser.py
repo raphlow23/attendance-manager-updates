@@ -46,7 +46,7 @@ class Handler(BaseHTTPRequestHandler):
         path=urlsplit(self.path).path
         if path=='/work' and direct_trip_landing:content=trip_page()
         elif path=='/work':content=NAV+'<div><span><h3>출장일지</h3></span><a href="/trips">바로가기</a></div><div><span><h3>시간외근무신청</h3></span><a href="/overtime">바로가기</a></div>'
-        elif path=='/trips':content=trip_page()
+        elif path in ('/trips','/sappd_g6.php'):content=trip_page()
         elif path=='/overtime':content=overtime_page()
         elif path=='/ot-edit':content=overtime_page(int(parse_qs(urlsplit(self.path).query)['index'][0]))
         elif path=='/ot-success':content=NAV+'<h2>신청 저장 완료</h2>'
@@ -104,6 +104,9 @@ try:
      TripPage(driver).open()
      assert driver.current_url==base+'/work' and TripPage(driver).form()
      direct_trip_landing=False
+     with patch('trip_site.TRIP_ENTRY_URL',base+'/sappd_g6.php'):
+      TripPage(driver).open()
+      assert driver.current_url==base+'/sappd_g6.php' and TripPage(driver).form()
      page=overtime.OvertimePage(driver);page.open();rows=[]
      for d,checkout in ((1,'19:55'),(7,'20:30')):rows.append(dict(overtime.application_row(date(2026,10,d),{'checkin':'08:35','checkout':checkout}),purpose='직접  입력한 시간외 목적'))
      statuses={};result=overtime.submit_rows(page,rows,rows,statuses,lambda values:None)
@@ -125,5 +128,5 @@ try:
      assert len(rejected)==1 and rejected[0]['status'].startswith('확인 필요:') and statuses[rows[0]['date']]['status']=='uncertain',rejected
      assert len(ot_records)==3 and ot_records[0]['purpose']=='수정한 새 근무목적'
     finally:driver.quit()
-   print('JOURNAL_BROWSER_OK: trip workflow + direct work-log trip form without a menu link; overtime purpose absent from list / success page without history / observed-page refresh / two sequential POSTs / existing date purpose updated once / uncertain missing date added / detail purpose verified / no duplicate dates; no target-site requests')
+   print('JOURNAL_BROWSER_OK: trip workflow + work-log direct form + user-supplied direct URL without menu links; overtime purpose absent from list / success page without history / observed-page refresh / two sequential POSTs / existing date purpose updated once / uncertain missing date added / detail purpose verified / no duplicate dates; no target-site requests')
 finally:server.shutdown();server.server_close();thread.join()

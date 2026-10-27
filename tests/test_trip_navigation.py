@@ -2,6 +2,7 @@ import sys
 import unittest
 from pathlib import Path
 from unittest.mock import Mock
+from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.common.by import By
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'app'))
@@ -9,6 +10,35 @@ from trip_site import TripPage
 
 
 class TripNavigation(unittest.TestCase):
+    def test_user_supplied_trip_url_does_not_require_work_log_or_trip_links(self):
+        driver=Mock(current_url='http://sappd.kr/sappd_g4.php?m=10')
+        driver.get.side_effect=lambda url:setattr(driver,'current_url',url)
+        page=TripPage(driver);page.form=Mock(return_value=Mock());page.entry_control=Mock()
+        page.open()
+        driver.get.assert_called_once_with('http://sappd.kr/sappd_g6.php')
+        driver.find_elements.assert_not_called();page.entry_control.assert_not_called()
+
+    def test_https_session_is_not_downgraded_for_direct_trip_entry(self):
+        driver=Mock(current_url='https://sappd.kr/sappd_g4.php')
+        driver.get.side_effect=lambda url:setattr(driver,'current_url',url)
+        page=TripPage(driver);page.form=Mock(return_value=Mock());page.open()
+        driver.get.assert_called_once_with('https://sappd.kr/sappd_g6.php')
+
+    def test_direct_entry_without_form_stops_without_trying_other_menus(self):
+        driver=Mock(current_url='http://sappd.kr/sappd_g4.php')
+        driver.get.side_effect=lambda url:setattr(driver,'current_url',url)
+        page=TripPage(driver);page.wait=Mock();page.wait.until.side_effect=TimeoutException()
+        with self.assertRaisesRegex(RuntimeError,'입력 폼'):page.open()
+        driver.get.assert_called_once_with('http://sappd.kr/sappd_g6.php')
+        driver.find_elements.assert_not_called()
+
+    def test_cross_site_redirect_does_not_continue_to_fill_or_submit(self):
+        driver=Mock(current_url='http://sappd.kr/sappd_g4.php')
+        driver.get.side_effect=lambda url:setattr(driver,'current_url','https://other.invalid/login')
+        page=TripPage(driver);page.form=Mock()
+        with self.assertRaisesRegex(RuntimeError,'다른 사이트'):page.open()
+        page.form.assert_not_called()
+
     def page(self):
         driver=Mock(current_url='https://test.invalid/attendance')
         work=Mock(text='근무일지',is_displayed=Mock(return_value=True))
