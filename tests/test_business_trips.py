@@ -112,14 +112,29 @@ class TripJobs(unittest.TestCase):
         with patch.object(app,'create_driver') as driver:
             result=trips.run_job(app,dict(operation='allocate',review_id='fixture',total=30000,rows=rows))
         driver.assert_not_called();self.assertEqual(result['summary']['remaining_amount'],0)
-    def test_scan_reads_attendance_without_opening_trip_page(self):
+    def test_failed_initial_journal_lookup_keeps_attendance_with_unknown_mark(self):
         self.prepare();driver=Mock()
         records=[attendance('2026-10-07','09:00','18:00'),attendance('2026-10-13'),attendance('2026-10-14',co=':')]
         with patch('monthly_reconcile._connect',return_value=(driver,Mock())),patch('monthly_reconcile._read_month',return_value=records),patch('trip_site.TripPage') as page:
             page.return_value.open.side_effect=RuntimeError('trip menu unavailable')
             result=trips.run_job(app,dict(operation='scan',month='2026-10',total=30000))
         self.assertEqual([r['date'] for r in result['rows']],['2026-10-07','2026-10-13'])
-        page.assert_not_called();driver.quit.assert_called_once()
+        page.return_value.open.assert_called_once();driver.quit.assert_called_once()
+        self.assertFalse(result['existing_checked']);self.assertTrue(all(not r['existing_checked'] for r in result['rows']))
+        self.assertFalse(app.load_json(app.STATE_FILE,{})['trip_review']['existing_verified'])
+
+    def test_initial_scan_marks_existing_dates_and_deducts_their_cost(self):
+        rows=self.prepare();driver=Mock()
+        saved=dict(date='2026-10-07',start='09:00',end='18:00',location='기존 장소',purpose='기존 목적')
+        with patch('monthly_reconcile._connect',return_value=(driver,Mock())),patch('monthly_reconcile._read_month',return_value=rows),patch('trip_site.TripPage') as page:
+            page.return_value.existing.return_value=[saved]
+            result=trips.run_job(app,dict(operation='scan',month='2026-10',total=40000))
+        self.assertTrue(result['existing_checked']);self.assertTrue(result['rows'][0]['is_existing'])
+        self.assertEqual(result['summary']['existing_amount'],20000)
+        self.assertEqual(result['summary']['remaining_amount'],20000)
+        self.assertEqual(result['rows'][0]['location'],'기존 장소')
+        self.assertFalse(result['rows'][1]['is_existing']);self.assertTrue(result['rows'][1]['existing_checked'])
+        page.return_value.submit.assert_not_called()
         self.assertFalse(app.load_json(app.STATE_FILE,{})['trip_review']['existing_verified'])
 
     def test_submit_without_existing_trip_check_never_connects(self):

@@ -19,11 +19,11 @@ foreach($label in (Get-WorkdayMonthLabels (Get-Date))){[void]$month.Items.Add($l
 $total=New-Object Windows.Forms.NumericUpDown;$total.Location=New-Object Drawing.Point(360,61);$total.Width=145;$total.Maximum=1000;$total.Increment=1;$total.ThousandsSeparator=$true;$form.Controls.Add($total)
 [void](Text-Label '만원 · 예: 20 = 20만원' 515 65 295)
 $scan=Make-Button '출퇴근 일정 조회' 855 55 355
-$note=Text-Label '구분: 센터 / 이동: 대중교통 · 행사 기본 09~18시 / 일반 기본 13~17시 · 휴가 숨김 · 기존 등록은 선택 완료 시 확인·중복 제외' 20 110 1190
+$note=Text-Label '구분: 센터 / 이동: 대중교통 · 행사 기본 09~18시 / 일반 기본 13~17시 · 휴가 숨김 · 기등록 날짜·금액을 최초 조회부터 표시 · 저장 전 재확인' 20 110 1190
 $grid=New-Object Windows.Forms.DataGridView;$grid.Location=New-Object Drawing.Point(20,155);$grid.Size=New-Object Drawing.Size(1190,370);$grid.Anchor='Top,Bottom,Left,Right'
 $grid.AllowUserToAddRows=$false;$grid.AllowUserToDeleteRows=$false;$grid.RowHeadersVisible=$false;$grid.AutoSizeColumnsMode='Fill';$grid.RowTemplate.Height=32
 $check=New-Object Windows.Forms.DataGridViewCheckBoxColumn;$check.Name='selected';$check.HeaderText='선택';$check.FillWeight=40;[void]$grid.Columns.Add($check)
-foreach($spec in @(@('date','날짜',100),@('weekday','요일',45),@('attendance','출퇴근',115),@('required','구분',145))){$c=New-Object Windows.Forms.DataGridViewTextBoxColumn;$c.Name=$spec[0];$c.HeaderText=$spec[1];$c.FillWeight=$spec[2];$c.ReadOnly=$true;[void]$grid.Columns.Add($c)}
+foreach($spec in @(@('date','날짜',100),@('weekday','요일',45),@('attendance','출퇴근',115),@('required','구분',145),@('registered','출장 등록',95))){$c=New-Object Windows.Forms.DataGridViewTextBoxColumn;$c.Name=$spec[0];$c.HeaderText=$spec[1];$c.FillWeight=$spec[2];$c.ReadOnly=$true;[void]$grid.Columns.Add($c)}
 foreach($spec in @(@('hours','인정시간',70),@('start_hour','출발 시',70))){$c=New-Object Windows.Forms.DataGridViewComboBoxColumn;$c.Name=$spec[0];$c.HeaderText=$spec[1];$c.FillWeight=$spec[2];$c.FlatStyle='Flat';$items=if($spec[0] -eq 'hours'){@('2','4')}else{@(0..23|ForEach-Object{[string]$_})};foreach($item in $items){[void]$c.Items.Add($item)};[void]$grid.Columns.Add($c)}
 foreach($spec in @(@('end','자동 복귀',85),@('amount','금액',90),@('location','출장 장소 (직접 입력)',180),@('purpose','출장 목적 (직접 입력)',300),@('status','상태',200))){$c=New-Object Windows.Forms.DataGridViewTextBoxColumn;$c.Name=$spec[0];$c.HeaderText=$spec[1];$c.FillWeight=$spec[2];$c.ReadOnly=($spec[0] -notin @('location','purpose'));[void]$grid.Columns.Add($c)}
 $grid.Columns['location'].Visible=$false;$grid.Columns['purpose'].Visible=$false;$form.Controls.Add($grid)
@@ -77,7 +77,7 @@ function Render-Rows($rows){
  try{
   $grid.Rows.Clear()
   foreach($entry in $rows){
-   $index=$grid.Rows.Add([bool]$entry.selected,$entry.date,$entry.weekday,($entry.checkin+'~'+$entry.checkout),$(if($entry.event_day){'연장근무 제외(행사)'}else{''}),[string][int]$entry.hours,[string][int]$entry.start_hour,$entry.end,[int]$entry.amount,$entry.location,$entry.purpose,$entry.status)
+   $index=$grid.Rows.Add([bool]$entry.selected,$entry.date,$entry.weekday,($entry.checkin+'~'+$entry.checkout),$(if($entry.event_day){'연장근무 제외(행사)'}else{''}),$(if($entry.is_existing){'기등록'}elseif($entry.existing_checked){'미등록'}else{'확인 안 됨'}),[string][int]$entry.hours,[string][int]$entry.start_hour,$entry.end,[int]$entry.amount,$entry.location,$entry.purpose,$entry.status)
    $row=$grid.Rows[$index];$row.Tag=$entry
    foreach($name in @('selected','hours','start_hour','location','purpose')){$row.Cells[$name].ReadOnly=[bool]$entry.blocked}
    if($entry.is_existing){$row.Cells['hours'].ReadOnly=$true;$row.Cells['start_hour'].ReadOnly=$true}
@@ -189,6 +189,7 @@ if($SelfTest){
  $saved=[PSCustomObject]@{date='2026-10-13';weekday='화';checkin='08:35';checkout='18:00';mandatory=$false;event_day=$false;is_existing=$true;selected=$true;blocked=$false;hours=4;start_hour=13;start='13:00';end='17:00';amount=20000;existing_amount=20000;existing_hours=4;location='저장된 장소';purpose='저장된 목적';status='기존 등록'}
  $script:existing=20000;$script:allRows=@($saved);$total.Value=2;Change-Stage 2
  if(-not $submit.Enabled -or $grid.Rows[0].Cells['selected'].ReadOnly -or $grid.Rows[0].Cells['location'].ReadOnly -or -not $grid.Rows[0].Cells['start_hour'].ReadOnly){throw '기존 출장 수정/금액 중복 합산 검사 실패'}
+ if($grid.Rows[0].Cells['registered'].Value -ne '기등록'){throw '기등록 날짜 표시 실패'}
  if($grid.Rows[0].Cells['location'].Value -ne '저장된 장소' -or $grid.Rows[0].Cells['purpose'].Value -ne '저장된 목적'){throw '기존 장소·목적 불러오기 실패'}
 
  if($PreviewPath){Change-Stage 2;$script:loading=$true;$form.Controls.Remove($allocate);$form.Controls.Remove($complete);$grid.Columns.Remove('attendance');Write-UiPreview $form $PreviewPath}

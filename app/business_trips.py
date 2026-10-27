@@ -71,7 +71,7 @@ def make_rows(attendance,rules,existing,today):
         if not valid:continue
         registered=totals.get(key)
         row=dict(date=key,weekday='월화수목금토일'[date.fromisoformat(key).weekday()],checkin=record.get('checkin',''),checkout=record.get('checkout',''),
-                 mandatory=False,event_day=event_day,selected=False,blocked=not valid or bool(registered and len(registered['records'])!=1),is_existing=bool(registered),
+                 mandatory=False,event_day=event_day,selected=False,existing_checked=True,blocked=not valid or bool(registered and len(registered['records'])!=1),is_existing=bool(registered),
                  location='',purpose='',existing_hours=registered['hours'] if registered else 0,existing_amount=registered['amount'] if registered else 0)
         row['status']=('기존 등록 · 장소·목적 수정 가능' if len(registered['records'])==1 else '같은 날 여러 출장 · 사이트에서 수정 필요') if registered else '선택 가능'
         try:row.update(window(row,4))
@@ -214,13 +214,28 @@ def run_job(app,job):
                     if row['date'] not in fresh or any(row[k]!=fresh[row['date']][k] for k in ('checkin','checkout')):
                         raise ValueError(f'{row["date"]}: 출퇴근 기록이 바뀌었습니다. 다시 조회하세요.')
             if operation=='scan':
-                # Attendance lookup must not depend on finding the trip menu.
-                rows=make_rows(attendance,rules,[],date.today())
-                review=dict(id=uuid.uuid4().hex,month=month,created_at=time.time(),account=_account(settings),rules=rules,rows=rows,existing=[],existing_amount=0,existing_verified=False)
+                # Read attendance first; a failed journal lookup must not erase it.
+                existing=[];existing_amount=0;checked=False;warning=''
+                try:
+                    lookup=TripPage(driver);lookup.open();existing=lookup.existing(month)
+                    existing_amount=sum(v['amount'] for v in existing_totals(existing).values());checked=True
+                except Exception as error:
+                    existing=[];existing_amount=0
+                    detail=str(error).strip()
+                    if not detail or detail in ('Message:','Message: None'):detail='사이트 응답 확인 실패'
+                    warning=f'기등록 확인 안 됨 ({type(error).__name__}): {detail[:300]}'
+                    app.log_event(warning)
+                rows=make_rows(attendance,rules,existing,date.today())
+                for row in rows:
+                    row['existing_checked']=checked
+                    if not checked:row['status']='기등록 확인 전 · 선택 완료 시 재확인'
+                review=dict(id=uuid.uuid4().hex,month=month,created_at=time.time(),account=_account(settings),rules=rules,rows=rows,existing=existing,existing_amount=existing_amount,existing_verified=False,initial_existing_checked=checked)
                 with app.file_lock('state'):
                     state=app.load_json(app.STATE_FILE,{});state['trip_review']=review;app.save_json(app.STATE_FILE,state)
-                summary=summarize(rows,job.get('total',0),0)
-                return dict(ok=True,review_id=review['id'],rows=rows,summary=summary,message='근태관리의 출퇴근 등록 날짜를 조회했습니다. 날짜·시간을 선택하세요. 기존 출장은 선택 완료 시 확인합니다.')
+                summary=summarize(rows,job.get('total',0),existing_amount)
+                days=len(existing_totals(existing)) if checked else 0
+                message=f'근태 날짜 조회 완료 · 기등록 {days}일 / {existing_amount:,}원 반영. 미등록 날짜를 추가 선택하세요. 기존 날짜는 장소·목적 수정만 가능합니다.' if checked else '근태 날짜는 조회했습니다. '+warning+' · 현재 금액은 임시 계산이며 선택 완료 시 반드시 확인합니다.'
+                return dict(ok=True,review_id=review['id'],rows=rows,summary=summary,message=message,existing_checked=checked)
             trips=TripPage(driver);trips.open();existing=trips.existing(month);trips.check_options()
             existing_amount=sum(v['amount'] for v in existing_totals(existing).values())
             if operation=='inspect':
