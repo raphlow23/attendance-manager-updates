@@ -4,6 +4,7 @@ No field names or private endpoint URLs are guessed. An ambiguous table/form
 raises an error before submission and leaves the record for a later attempt.
 """
 import re
+from urllib.parse import urlsplit, parse_qs
 from datetime import date, datetime, timedelta
 
 from selenium.common.exceptions import NoAlertPresentException, StaleElementReferenceException, TimeoutException
@@ -137,6 +138,8 @@ class AttendancePage:
         except Exception as error:
             phase = self.driver._workday_phase
             detail = '제한 시간 안에 화면 또는 저장 결과를 확인하지 못했습니다.' if isinstance(error, TimeoutException) else str(error).strip() or type(error).__name__
+            if isinstance(error, TimeoutException) and phase == '출퇴근 수정 입력 화면 찾기':
+                detail += ' ' + str(getattr(self.driver, '_workday_editor_diagnostic', ''))
             submitted = bool(getattr(self.driver, '_workday_write_submitted', False))
             outcome = '저장 요청 이후이므로 사이트에서 결과를 다시 확인하세요.' if submitted else '저장 버튼을 누르기 전에 중단했습니다.'
             raise RuntimeError(f'{day}: {phase} 실패 · {detail} {outcome}') from error
@@ -151,6 +154,7 @@ class AttendancePage:
             raise RuntimeError('조회 후 기록이 변경되었습니다. 다시 조회하세요.')
         controls = before["edit_cell"].find_elements(By.CSS_SELECTOR, "a, button, input")
         edit = one([c for c in controls if label(c) == "수정"], "해당 날짜의 수정 버튼")
+        edit_href = edit.get_attribute('href') or ''
         guard = getattr(self.driver, '_workday_before_write', None)
         if guard:
             guard()
@@ -160,27 +164,60 @@ class AttendancePage:
         if response_check:
             response_check()
 
+        def named_editor():
+            candidates=[]
+            for form in visible(self.driver.find_elements(By.TAG_NAME,'form')):
+                fields={name:visible(form.find_elements(By.CSS_SELECTOR,f'input[name="{name}"]'))
+                        for name in ('culgun','culguna','tehgun','tehguna','huuga')}
+                if all(len(values)==1 for values in fields.values()):
+                    candidates.append((form,fields))
+            if len(candidates)>1:
+                raise RuntimeError('동일한 출퇴근 수정 폼이 여러 개여서 저장을 중단합니다.')
+            if not candidates:return None
+            form,fields=candidates[0]
+            source=urlsplit(edit_href);action=urlsplit(form.get_attribute('action') or '')
+            source_query=parse_qs(source.query);action_query=parse_qs(action.query)
+            if (action.path.rsplit('/',1)[-1]!='sappd_g4_edit_pro.php'
+                    or not source_query.get('no') or not source_query.get('m')
+                    or any(source_query.get(k)!=action_query.get(k) for k in ('no','m'))
+                    or (source.netloc and (source.scheme,source.netloc)!=(action.scheme,action.netloc))):
+                raise RuntimeError('선택 날짜의 수정 링크와 저장 폼의 기록 번호·월·사이트가 다릅니다.')
+            return form,fields
+
         def edit_table(_):
+            named=named_editor()
+            if named:return ('named',named)
             candidates = []
-            for table in visible(self.driver.find_elements(By.TAG_NAME, "table")):
-                heads = [re.sub(r"\s", "", h.text) for h in table.find_elements(By.XPATH, ".//tr[th][1]/th")]
-                if heads != ["출근시간", "퇴근시간", "비고", "수정"]:
-                    # Some versions render the editor heading with td or mixed
-                    # cells. Still require the exact semantic four-column form.
-                    heads = [re.sub(r"\s", "", h.text) for h in table.find_elements(By.XPATH, ".//tr[th or td][1]/*[self::th or self::td]")]
-                if heads == ["출근시간", "퇴근시간", "비고", "수정"]:
+            tables = visible(self.driver.find_elements(By.TAG_NAME, "table"))
+            for table in tables:
+                # Descendant searches also matched layout tables containing the
+                # actual editor, turning one editor into several candidates.
+                own_rows = table.find_elements(By.XPATH, './tr | ./thead/tr | ./tbody/tr | ./tfoot/tr')
+                matching = any([re.sub(r'\s', '', h.text) for h in row.find_elements(By.XPATH, './th | ./td')]
+                               == ['출근시간', '퇴근시간', '비고', '수정'] for row in own_rows)
+                if matching:
                     candidates.append(table)
-            return candidates[0] if len(candidates) == 1 else False
+            self.driver._workday_editor_diagnostic = f'표시 테이블 {len(tables)}개 / 독립 수정 입력표 후보 {len(candidates)}개.'
+            return ('table',candidates[0]) if len(candidates) == 1 else False
 
         self.driver._workday_phase = '출퇴근 수정 입력 화면 찾기'
-        table = self.wait.until(edit_table)
+        kind,editor = self.wait.until(edit_table)
         self.driver._workday_phase = '수정 입력값 확인'
-        rows = [r for r in table.find_elements(By.XPATH, ".//tr[td]") if visible(r.find_elements(By.TAG_NAME, "input"))]
-        row = one(rows, "시간 수정 입력 행")
-        cells = row.find_elements(By.XPATH, "./td")
-        if len(cells) != 4:
-            raise RuntimeError("수정 입력칸 구조가 예상과 다릅니다.")
-        pairs = [visible(c.find_elements(By.CSS_SELECTOR, "input:not([type='hidden'])")) for c in cells[:2]]
+        if kind=='named':
+            form,fields=editor
+            row=form
+            pairs=[[fields[name][0] for name in names] for names in (('culgun','culguna'),('tehgun','tehguna'))]
+            save=one([c for c in form.find_elements(By.CSS_SELECTOR,'button, a, input') if label(c)=='수정완료'],'수정완료 버튼')
+            expected_action=form.get_attribute('action')
+        else:
+            table=editor
+            rows = [r for r in table.find_elements(By.XPATH, './tr | ./thead/tr | ./tbody/tr | ./tfoot/tr') if visible(r.find_elements(By.TAG_NAME, "input"))]
+            row = one(rows, "시간 수정 입력 행")
+            cells = row.find_elements(By.XPATH, "./td")
+            if len(cells) != 4:
+                raise RuntimeError("수정 입력칸 구조가 예상과 다릅니다.")
+            pairs = [visible(c.find_elements(By.CSS_SELECTOR, "input:not([type='hidden'])")) for c in cells[:2]]
+            save = one([c for c in cells[3].find_elements(By.CSS_SELECTOR, 'button, a, input') if label(c)=='수정완료'],'수정완료 버튼')
         if [len(pair) for pair in pairs] != [2, 2]:
             raise RuntimeError("출퇴근 시/분 입력칸을 확인하지 못했습니다.")
         # Confirm we opened the correct row before touching any input.
@@ -205,7 +242,8 @@ class AttendancePage:
         current = self.record(day)
         if any(current[key] != before[key] for key in ("checkin", "checkout", "note")):
             raise RuntimeError("다른 곳에서 근태 기록이 변경되어 저장을 중단합니다.")
-        save = one([c for c in cells[3].find_elements(By.CSS_SELECTOR, "button, a, input") if label(c) == "수정완료"], "수정완료 버튼")
+        if kind=='named' and form.get_attribute('action')!=expected_action:
+            raise RuntimeError('입력 중 저장 대상이 변경되어 저장을 중단합니다.')
         self.driver._workday_phase = '수정완료 버튼 저장'
         self.driver._workday_write_submitted = True
         save.click()

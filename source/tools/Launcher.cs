@@ -6,7 +6,7 @@ using System.Runtime.InteropServices;
 using System.Windows.Forms;
 [assembly: AssemblyTitle("출근정리")]
 [assembly: AssemblyProduct("출근정리")]
-[assembly: AssemblyVersion("1.25.0.0")]
+[assembly: AssemblyVersion("1.26.0.0")]
 public sealed class WorkdayWindowOwner : IWin32Window {
     public IntPtr Handle { get; private set; }
     public WorkdayWindowOwner(long handle) { Handle = new IntPtr(handle); }

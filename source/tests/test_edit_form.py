@@ -83,6 +83,8 @@ class FakeSite:
             (By.XPATH, './/tr[th][1]/th'): [Element(s) for s in ['출근시간', '퇴근시간', '비고', '수정']],
             (By.XPATH, './/tr[td]'): [row],
         })
+        header = Element(children={(By.XPATH, './th | ./td'): self.editor.children[(By.XPATH, './/tr[th][1]/th')]})
+        self.editor.children[(By.XPATH, './tr | ./thead/tr | ./tbody/tr | ./tfoot/tr')] = [header, row]
 
     def save(self):
         self.saved = True
@@ -97,6 +99,8 @@ class FakeSite:
         raise AssertionError((by, selector))
 
     def find_elements(self, by, selector):
+        if (by,selector)==(By.TAG_NAME,'form'):
+            return []
         if (by, selector) == (By.TAG_NAME, 'table'):
             return [self.table] + ([self.editor] if self.editing else [])
         raise AssertionError((by, selector))
@@ -124,6 +128,34 @@ class EditFormTests(unittest.TestCase):
                 page.correct(date(2026,10,23),{'checkout':datetime(2026,10,23,19,35)},page.record(date(2026,10,23)))
         self.assertIn('저장 버튼을 누르기 전에',str(caught.exception))
         self.assertFalse(site.saved)
+
+    def test_nested_layout_table_is_not_a_duplicate_editor(self):
+        site=FakeSite();original=site.find_elements
+        def tables(by,selector):
+            result=original(by,selector)
+            if site.editing:
+                # A surrounding layout table exposes the nested heading to a
+                # descendant search, but its own row is only a layout cell.
+                wrapper=Element(children={
+                    (By.XPATH,'.//tr[th][1]/th'): site.editor.children[(By.XPATH,'.//tr[th][1]/th')],
+                    (By.XPATH,'./tr | ./thead/tr | ./tbody/tr | ./tfoot/tr'): [Element(children={(By.XPATH,'./th | ./td'):[Element('layout')]})]})
+                return [wrapper]+result
+            return result
+        site.find_elements=tables
+        page=AttendancePage(site,date(2026,10,26));day=date(2026,10,23)
+        page.correct(day,{'checkout':datetime(2026,10,23,19,35)},page.record(day))
+        self.assertTrue(site.saved)
+
+    def test_decorative_title_before_editor_heading_is_allowed(self):
+        site=FakeSite();original=site.open_edit
+        def open_edit():
+            original()
+            site.editor.children[(By.XPATH,'./tr | ./thead/tr | ./tbody/tr | ./tfoot/tr')].insert(0,Element(children={(By.XPATH,'./th | ./td'):[Element('근태 기록 수정하기')]}))
+        link=site.table.children[(By.XPATH,'.//tr[td]')][0].children[(By.XPATH,'./td')][4].children[(By.CSS_SELECTOR,'a, button, input')][0]
+        link.click_handler=open_edit
+        page=AttendancePage(site,date(2026,10,26));day=date(2026,10,23)
+        page.correct(day,{'checkout':datetime(2026,10,23,19,35)},page.record(day))
+        self.assertTrue(site.saved)
 
     def test_unverified_save_is_never_reported_complete(self):
         site=FakeSite();page=AttendancePage(site,date(2026,10,26))
