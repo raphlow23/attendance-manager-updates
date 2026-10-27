@@ -7,6 +7,8 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from datetime import date, datetime
+from unittest.mock import patch
+from selenium.webdriver.remote.webelement import WebElement
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'app'))
@@ -71,11 +73,15 @@ with tempfile.TemporaryDirectory(prefix='workday-local-dom-') as folder:
         try:
             driver.get(f'http://127.0.0.1:{server.server_port}/sappd_g4.php?m=10')
             page=AttendancePage(driver,date(2026,10,27));day=date(2026,10,7)
-            assert page.correct(day,{'checkin':datetime(2026,10,7,9),'checkout':datetime(2026,10,7,18)},page.record(day))
+            original_attribute=WebElement.get_attribute
+            def initial_attribute(element,name):
+                return element.get_dom_attribute(name) if name=='value' else original_attribute(element,name)
+            with patch.object(WebElement,'send_keys',lambda self,*values:None),patch.object(WebElement,'get_attribute',initial_attribute):
+                assert page.correct(day,{'checkin':datetime(2026,10,7,9),'checkout':datetime(2026,10,7,18)},page.record(day))
             after=page.record(day)
             assert parse_time(after['checkin'])==(9,0) and parse_time(after['checkout'])==(18,0)
             assert after['note']=='기존 비고' and Handler.posts==0
-            print('NAMED_FORM_BROWSER_OK: real Chrome list/navigation/named inputs/blur normalization/local submit/verification; no target site requests')
+            print('NAMED_FORM_BROWSER_OK: real Chrome list/navigation/native value/blur/local submit/verification with no-op keyboard and stale HTML attributes; no target site requests')
         finally:
             server.shutdown();server.server_close();thread.join()
     finally:

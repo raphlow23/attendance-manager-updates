@@ -49,6 +49,30 @@ def one(elements, description):
     return elements[0]
 
 
+def input_value(element):
+    """Read live input state, not its initial HTML value attribute."""
+    getter=getattr(element,'get_property',None)
+    return str((getter('value') if callable(getter) else element.get_attribute('value')) or '')
+
+
+SET_TIME_INPUTS = '''
+const inputs=arguments[0], values=arguments[1];
+if(inputs.length!==2 || values.length!==2) throw new Error('Invalid time input pair');
+for(const input of inputs){
+  if(!(input instanceof HTMLInputElement) || input.disabled || input.readOnly)
+    throw new Error('Time input is not editable');
+}
+const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;
+for(let i=0;i<inputs.length;i++) setter.call(inputs[i],values[i]);
+for(const input of inputs){
+  input.dispatchEvent(new Event('input',{bubbles:true}));
+  input.dispatchEvent(new Event('change',{bubbles:true}));
+  input.focus({preventScroll:true});input.blur();
+}
+return inputs.map(input=>input.value);
+'''
+
+
 class AttendancePage:
     def __init__(self, driver, today):
         self.driver = driver
@@ -247,32 +271,36 @@ class AttendancePage:
         if [len(pair) for pair in pairs] != [2, 2]:
             raise RuntimeError("출퇴근 시/분 입력칸을 확인하지 못했습니다.")
         # Confirm we opened the correct row before touching any input.
-        displayed_checkin = parse_time(":".join(i.get_attribute("value") for i in pairs[0]))
+        displayed_checkin = parse_time(":".join(input_value(i) for i in pairs[0]))
         if displayed_checkin != parse_time(before["checkin"]):
             raise RuntimeError("선택한 날짜와 수정 화면의 출근 시간이 다릅니다.")
-        displayed_checkout = parse_time(":".join(i.get_attribute("value") for i in pairs[1]))
+        displayed_checkout = parse_time(":".join(input_value(i) for i in pairs[1]))
         if displayed_checkout != parse_time(before["checkout"]):
             raise RuntimeError("선택한 날짜와 수정 화면의 퇴근 시간이 다릅니다.")
         target_inputs = [i for field in targets for i in pairs[0 if field == 'checkin' else 1]]
         untouched = [i for i in row.find_elements(By.CSS_SELECTOR, "input, textarea, select") if i not in target_inputs]
-        values = [(i, i.get_attribute("value")) for i in untouched]
+        values = [(i, input_value(i)) for i in untouched]
         for field, target in targets.items():
             inputs = pairs[0 if field == 'checkin' else 1]
-            for element, value in zip(inputs, (target.hour, target.minute)):
-                element.click()
-                element.send_keys(Keys.CONTROL, 'a')
-                element.send_keys(Keys.BACKSPACE)
-                element.send_keys(f"{value:02d}")
-                element.send_keys(Keys.TAB)
+            execute=getattr(self.driver,'execute_script',None)
+            if callable(execute):
+                execute(SET_TIME_INPUTS,inputs,[f'{target.hour:02d}',f'{target.minute:02d}'])
+            else:
+                for element, value in zip(inputs, (target.hour, target.minute)):
+                    element.click()
+                    element.send_keys(Keys.CONTROL, 'a')
+                    element.send_keys(Keys.BACKSPACE)
+                    element.send_keys(f"{value:02d}")
+                    element.send_keys(Keys.TAB)
             def input_matches(_):
-                return parse_time(':'.join(str(i.get_attribute('value') or '').strip() for i in inputs))==(target.hour,target.minute)
+                return parse_time(':'.join(input_value(i).strip() for i in inputs))==(target.hour,target.minute)
             try:
                 WebDriverWait(self.driver,3,poll_frequency=0.1).until(input_matches)
             except TimeoutException as error:
-                actual=':'.join(re.sub(r'[^0-9\s]', '?',str(i.get_attribute('value') or ''))[:8] for i in inputs)
+                actual=':'.join(re.sub(r'[^0-9\s]', '?',input_value(i))[:8] for i in inputs)
                 name='출근' if field=='checkin' else '퇴근'
                 raise RuntimeError(f'{name} 입력값이 다릅니다: 예정 {target:%H:%M} / 입력칸 {actual}. 저장하지 않았습니다.') from error
-        if any(i.get_attribute("value") != value for i, value in values):
+        if any(input_value(i) != value for i, value in values):
             raise RuntimeError("대상 외 입력값이 바뀌어 저장을 중단합니다.")
         current = self.record(day)
         if any(current[key] != before[key] for key in ("checkin", "checkout", "note")):

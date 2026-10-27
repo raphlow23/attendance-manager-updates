@@ -17,15 +17,16 @@ FIXTURE=Path(__file__).parent/'fixtures'/'attendance_edit_form.html'
 
 
 class Node:
-    def __init__(self,site,node):self.site,self.node=site,node;self.selected=False
+    def __init__(self,site,node):self.site,self.node=site,node;self.selected=False;self.live_value=node.get('value','')
     @property
     def text(self):return ''.join(self.node.itertext()).strip()
     def is_displayed(self):return True
     def get_attribute(self,name):
         value=self.node.get(name)
         return urljoin('http://sappd.kr/',value) if value and name in ('href','action') else value
+    def get_property(self,name):return self.live_value if name=='value' else self.get_attribute(name)
     def find_elements(self,by,selector):return self.site.select(self.node,by,selector)
-    def clear(self):self.node.set('value','')
+    def clear(self):self.node.set('value','');self.live_value=''
     def send_keys(self,*values):
         if values==(Keys.CONTROL,'a'):self.selected=True;return
         value=values[0]
@@ -41,8 +42,8 @@ class Node:
         link=next(a for a in links if parse_qs(urlsplit(a.get('href')).query)==query)
         row=link.xpath('ancestor::tr[1]')[0];cells=row.xpath('./td')
         for index,names in ((1,('culgun','culguna')),(2,('tehgun','tehguna'))):
-            cells[index].text=' : '.join(form.xpath(f'.//input[@name="{n}"]')[0].get('value') for n in names)
-        cells[3].text=form.xpath('.//input[@name="huuga"]')[0].get('value')
+            cells[index].text=' : '.join(self.site.wrap(form.xpath(f'.//input[@name="{n}"]')[0]).get_property('value') for n in names)
+        cells[3].text=self.site.wrap(form.xpath('.//input[@name="huuga"]')[0]).get_property('value')
         self.site.saved+=1
 
 
@@ -53,6 +54,9 @@ class ParsedSite:
     def get(self,url):
         self.navigations.append(url);self.current_url=url
         if self.edit_source:self.doc=html.fromstring(self.edit_source);self.cache={}
+    def execute_script(self,script,inputs,values):
+        for element,value in zip(inputs,values):element.live_value=value
+        return [element.live_value for element in inputs]
     def wrap(self,node):
         if node not in self.cache:self.cache[node]=Node(self,node)
         return self.cache[node]
@@ -88,6 +92,12 @@ def verify_source(source):
 
 class SavedFormTests(unittest.TestCase):
     def test_source_derived_form_saves_and_preserves_note(self):verify_source(FIXTURE.read_text(encoding='utf-8'))
+    def test_live_value_is_used_when_html_attribute_remains_original(self):
+        site=verify_source(FIXTURE.read_text(encoding='utf-8'))
+        hour=site.wrap(site.doc.xpath('//input[@name="culgun"]')[0])
+        self.assertEqual(hour.get_attribute('value'),'08')
+        self.assertEqual(hour.get_property('value'),'09')
+        self.assertEqual(site.saved,1)
     def test_opening_editor_from_list_uses_observed_link_once(self):
         source=FIXTURE.read_text(encoding='utf-8');site=ParsedSite(source)
         form=site.doc.xpath('//form[.//input[@name="culgun"]]')[0];form.getparent().remove(form)
