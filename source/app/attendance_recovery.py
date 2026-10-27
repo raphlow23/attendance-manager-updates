@@ -159,7 +159,28 @@ class AttendancePage:
         if guard:
             guard()
         self.driver._workday_phase = '해당 날짜 수정 버튼 열기'
-        edit.click()
+        if edit_href:
+            # Follow the exact observed link once. Do not depend on a click
+            # navigating the current tab (or retry a navigation in a loop).
+            source=urlsplit(edit_href);query=parse_qs(source.query)
+            if (source.path.rsplit('/',1)[-1]!='sappd_g4_edit.php'
+                    or len(query.get('no',[]))!=1 or not query['no'][0].isdigit()
+                    or query.get('m')!=[str(day.month)]):
+                raise RuntimeError('선택한 날짜의 수정 주소와 기록 번호·월을 확인하지 못했습니다.')
+            current_url=getattr(self.driver,'current_url','')
+            if isinstance(current_url,str) and current_url:
+                current=urlsplit(current_url)
+                if (source.scheme,source.netloc)!=(current.scheme,current.netloc):
+                    raise RuntimeError('수정 링크가 현재 사이트와 달라 이동을 중단합니다.')
+            self.driver.get(edit_href)
+            final_url=getattr(self.driver,'current_url','')
+            if isinstance(final_url,str) and final_url:
+                final=urlsplit(final_url);final_query=parse_qs(final.query)
+                if ((source.scheme,source.netloc,source.path)!=(final.scheme,final.netloc,final.path)
+                        or any(query.get(k)!=final_query.get(k) for k in ('no','m'))):
+                    raise RuntimeError(f'수정 주소로 이동했지만 사이트가 다른 화면({final.path.rsplit("/",1)[-1] or "/"})을 반환했습니다. 수정 페이지 접근·로그인 상태를 확인하세요.')
+        else:
+            edit.click()
         response_check = getattr(self.driver, '_workday_check_response', None)
         if response_check:
             response_check()
@@ -197,7 +218,11 @@ class AttendancePage:
                                == ['출근시간', '퇴근시간', '비고', '수정'] for row in own_rows)
                 if matching:
                     candidates.append(table)
-            self.driver._workday_editor_diagnostic = f'표시 테이블 {len(tables)}개 / 독립 수정 입력표 후보 {len(candidates)}개.'
+            all_forms=self.driver.find_elements(By.TAG_NAME,'form')
+            field_count=len(self.driver.find_elements(By.CSS_SELECTOR,'input[name="culgun"]'))
+            current_url=getattr(self.driver,'current_url','')
+            path=urlsplit(current_url).path.rsplit('/',1)[-1] if isinstance(current_url,str) else ''
+            self.driver._workday_editor_diagnostic = f'현재 페이지 {path or "확인 불가"} / 표시 테이블 {len(tables)}개 / 입력표 후보 {len(candidates)}개 / 폼 {len(all_forms)}개 / 출근 입력 DOM {field_count}개.'
             return ('table',candidates[0]) if len(candidates) == 1 else False
 
         self.driver._workday_phase = '출퇴근 수정 입력 화면 찾기'

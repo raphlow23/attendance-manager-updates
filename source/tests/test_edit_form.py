@@ -101,6 +101,8 @@ class FakeSite:
     def find_elements(self, by, selector):
         if (by,selector)==(By.TAG_NAME,'form'):
             return []
+        if (by,selector)==(By.CSS_SELECTOR,'input[name="culgun"]'):
+            return []
         if (by, selector) == (By.TAG_NAME, 'table'):
             return [self.table] + ([self.editor] if self.editing else [])
         raise AssertionError((by, selector))

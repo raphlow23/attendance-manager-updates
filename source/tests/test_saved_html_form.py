@@ -42,6 +42,10 @@ class Node:
 class ParsedSite:
     def __init__(self,source):
         self.doc=html.fromstring(source);self.cache={};self.saved=0;self.switch_to=NoAlert()
+        self.current_url='http://sappd.kr/sappd_g4.php?m=10';self.navigations=[];self.edit_source=None
+    def get(self,url):
+        self.navigations.append(url);self.current_url=url
+        if self.edit_source:self.doc=html.fromstring(self.edit_source);self.cache={}
     def wrap(self,node):
         if node not in self.cache:self.cache[node]=Node(self,node)
         return self.cache[node]
@@ -77,6 +81,24 @@ def verify_source(source):
 
 class SavedFormTests(unittest.TestCase):
     def test_source_derived_form_saves_and_preserves_note(self):verify_source(FIXTURE.read_text(encoding='utf-8'))
+    def test_opening_editor_from_list_uses_observed_link_once(self):
+        source=FIXTURE.read_text(encoding='utf-8');site=ParsedSite(source)
+        form=site.doc.xpath('//form[.//input[@name="culgun"]]')[0];form.getparent().remove(form)
+        site.edit_source=source
+        self.assertEqual(len(site.doc.xpath('//input[@name="culgun"]')),0)
+        page=AttendancePage(site,date(2026,10,27));day=date(2026,10,7)
+        page.correct(day,{'checkout':datetime(2026,10,7,18)},page.record(day))
+        self.assertEqual(site.navigations,['http://sappd.kr/sappd_g4_edit.php?no=10001&m=10'])
+        self.assertEqual(site.saved,1)
+
+    def test_redirect_to_list_is_reported_before_any_save(self):
+        site=ParsedSite(FIXTURE.read_text(encoding='utf-8'))
+        def redirect(url):site.navigations.append(url);site.current_url='http://sappd.kr/sappd_g4.php?m=10'
+        site.get=redirect
+        page=AttendancePage(site,date(2026,10,27));day=date(2026,10,7)
+        with self.assertRaisesRegex(RuntimeError,'사이트가 다른 화면'):
+            page.correct(day,{'checkout':datetime(2026,10,7,18)},page.record(day))
+        self.assertEqual(site.saved,0);self.assertEqual(len(site.navigations),1)
     def test_wrong_record_month_or_site_never_submits(self):
         source=FIXTURE.read_text(encoding='utf-8')
         for action in ('sappd_g4_edit_pro.php?no=99999&m=10','sappd_g4_edit_pro.php?no=10001&m=9','http://other.invalid/sappd_g4_edit_pro.php?no=10001&m=10'):
