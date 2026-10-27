@@ -10,13 +10,14 @@ from lxml import html
 sys.path[:0]=[str(Path(__file__).resolve().parents[1]/'app')]
 from attendance_recovery import AttendancePage
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from test_edit_form import NoAlert
 
 FIXTURE=Path(__file__).parent/'fixtures'/'attendance_edit_form.html'
 
 
 class Node:
-    def __init__(self,site,node):self.site,self.node=site,node
+    def __init__(self,site,node):self.site,self.node=site,node;self.selected=False
     @property
     def text(self):return ''.join(self.node.itertext()).strip()
     def is_displayed(self):return True
@@ -25,9 +26,15 @@ class Node:
         return urljoin('http://sappd.kr/',value) if value and name in ('href','action') else value
     def find_elements(self,by,selector):return self.site.select(self.node,by,selector)
     def clear(self):self.node.set('value','')
-    def send_keys(self,value):self.node.set('value',(self.node.get('value') or '')+value)
+    def send_keys(self,*values):
+        if values==(Keys.CONTROL,'a'):self.selected=True;return
+        value=values[0]
+        if value==Keys.BACKSPACE:
+            self.node.set('value','' if self.selected else (self.node.get('value') or '')[:-1]);self.selected=False;return
+        if value==Keys.TAB:return
+        self.node.set('value',('' if self.selected else self.node.get('value') or '')+value);self.selected=False
     def click(self):
-        if self.node.tag=='a':return
+        if self.node.tag!='button':return
         form=self.node.xpath('ancestor::form[1]')[0]
         query=parse_qs(urlsplit(form.get('action')).query)
         links=self.site.doc.xpath('//a[contains(@href,"sappd_g4_edit.php")]')

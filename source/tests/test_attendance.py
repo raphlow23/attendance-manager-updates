@@ -303,6 +303,16 @@ class StateTests(unittest.TestCase):
             self.assertEqual(execute.call_args.kwargs['creationflags'], app.subprocess.CREATE_NO_WINDOW)
             self.assertFalse(execute.call_args.kwargs.get('shell', False))
 
+    def test_known_mismatched_driver_is_skipped_before_launch(self):
+        with patch.object(app.os.path,'exists',return_value=True),patch('site_access.reserve_session'), \
+             patch.object(app,'QuietChromeOSManager') as version,patch.object(app.subprocess,'run',return_value=Mock(stdout='ChromeDriver 153.0.1')), \
+             patch.object(app,'ChromeDriverManager') as manager,patch.object(app.webdriver,'Chrome') as chrome:
+            version.return_value.get_browser_version_from_os.return_value='156.0.8078.48'
+            manager.return_value.install.return_value='matching-driver.exe'
+            app.create_driver()
+        chrome.assert_called_once()
+        self.assertEqual(chrome.call_args.kwargs['service'].path,'matching-driver.exe')
+
 
 class RecoveryTests(unittest.TestCase):
     def test_time_parsing_and_blank_detection(self):

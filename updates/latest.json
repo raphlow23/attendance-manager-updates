@@ -1,7 +1,7 @@
 {
     "runtime":  "3.12.10",
-    "sha256":  "5f79161a1eae86fe58b3a4cbeb5877be678062ffbe0182c5de21f18d871884a9",
-    "version":  27,
-    "signature":  "Bf2jFkwvEofAvSQRwg1TwrjV4QdignO/WpJ5O2EB7EwWaU5bKwE4pg25rM20KwHgWamHFMX91BCH0BnCXiVCpajpvITQsib+uug5XNOPJc+d9aiNyME2OfqXa98BdlDKKhhcrQFCWnZDWztYfieOgPJ8q/GN9QQ8YyJzKwx2zZ24iFTVOZ2feCk2YfwlIKSjqkr5OymJN/dmpdrK6O11PWjrN3CZh6Xs/dN4qXJtzfe0q7SqDiUtL1nrRqWXcFEuXzSisDZRW5uSlP/oRYAro/4e88Tf7MwW+MQ+0cDl66wik1yRj10UynKsYZ/bjfUSXgQNlzYq0E4P8Tsbog69K4E8aEWuAHP/7VeXDTuiry8BH/F83iHV3FE8O08OXNrdPLZZghXfmBt7b1JvnXjdHKQ5b9iUst7McvC5yiOD4z2+/3eY6UJB5dZuBotG7TxDoYSU8bKnrnnCcSznSGS0OboVEBDGhHqCK+pVxxgBP4AtkDH6TSObyh81/ML/y52O",
-    "archive_url":  "https://raw.githubusercontent.com/raphlow23/attendance-manager-updates/main/updates/v27/attendance-manager-v27.zip"
+    "sha256":  "7399a1e1adfe69f732953c95d7562786afa9af649d106900de8914ca54418665",
+    "version":  28,
+    "signature":  "ea2KKNVKBS6Jx75r2ivxpjlzMDVdOPI3IjO9ME9+FCfMWzO/sEhdjUb4gffjAluBcgEH4WXSoLr0pU+49jOtLa2XkG0zfUijWTT+WRCJa/bbey7246aygZt4xk9cHORucQwCFDxdUSEqGyswk6rVZPEcgm2VL0Dr8p+dslGCqKCebbOcwubQl20v2kNXTaN/cJqlZXCMRaqJRhIzPoOQDFuAWKioZaNM8Gy7JO4d6Rv0nVkpZ80e8ziPo538e+KeN1BTd6n5p5LGnvi7KfSoYFQ5EaHRbvsUwr3V1MYJ2YXHPk0k6vbyem1mp9OkqgOD4Uvlr01Bi8vK8BMwFGKp1mDpHpk5Tc7TYIj1QuUVqLB/ACf/UPmHOaMp4OvF8fFYUYD0R7tzEbqPD7FkNVwo9/5X02RZ7p8+frP2hS+aH21SUsCLZnOvOV99PEA9Xh6U+f8QvW5X5doQpxFWvbxpBnpucPUvtCgU8DtYKDXK2Q/+wjyiiAaqf/t19V7scmfn",
+    "archive_url":  "https://raw.githubusercontent.com/raphlow23/attendance-manager-updates/main/updates/v28/attendance-manager-v28.zip"
 }

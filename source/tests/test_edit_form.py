@@ -10,6 +10,7 @@ from selenium.common.exceptions import NoAlertPresentException
 from selenium.common.exceptions import TimeoutException
 from unittest.mock import patch
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 
 
 class Element:
@@ -19,6 +20,7 @@ class Element:
         self.children = children or {}
         self.click_handler = click
         self.change_handler = None
+        self.selected=False
 
     def is_displayed(self):
         return True
@@ -36,7 +38,13 @@ class Element:
     def clear(self):
         self.value = ''
 
-    def send_keys(self, value):
+    def send_keys(self, *values):
+        if values==(Keys.CONTROL,'a'):self.selected=True;return
+        value=values[0]
+        if value==Keys.BACKSPACE:
+            self.value='' if self.selected else self.value[:-1];self.selected=False;return
+        if value==Keys.TAB:return
+        if self.selected:self.value='';self.selected=False
         self.value += value
         if self.change_handler:
             self.change_handler()
@@ -109,6 +117,29 @@ class FakeSite:
 
 
 class EditFormTests(unittest.TestCase):
+    def test_keyboard_replace_works_when_clear_has_no_effect(self):
+        site=FakeSite();original=site.open_edit
+        def open_edit():
+            original()
+            for element in site.fields:element.clear=lambda:None
+        link=site.table.children[(By.XPATH,'.//tr[td]')][0].children[(By.XPATH,'./td')][4].children[(By.CSS_SELECTOR,'a, button, input')][0]
+        link.click_handler=open_edit
+        page=AttendancePage(site,date(2026,10,26));day=date(2026,10,23)
+        page.correct(day,{'checkin':datetime(2026,10,23,9),'checkout':datetime(2026,10,23,18)},page.record(day))
+        self.assertEqual(site.checkin.text,'09 : 00');self.assertEqual(site.checkout.text,'18 : 00')
+
+    def test_input_values_with_surrounding_spaces_are_compared_as_time(self):
+        site=FakeSite();original=site.open_edit
+        def open_edit():
+            original()
+            for element in site.fields:
+                getter=element.get_attribute
+                element.get_attribute=lambda name,getter=getter:(' '+getter(name)+' ') if name=='value' else getter(name)
+        link=site.table.children[(By.XPATH,'.//tr[td]')][0].children[(By.XPATH,'./td')][4].children[(By.CSS_SELECTOR,'a, button, input')][0]
+        link.click_handler=open_edit
+        page=AttendancePage(site,date(2026,10,26));day=date(2026,10,23)
+        page.correct(day,{'checkin':datetime(2026,10,23,9),'checkout':datetime(2026,10,23,18)},page.record(day))
+        self.assertTrue(site.saved)
     def test_td_or_mixed_editor_heading_is_accepted(self):
         for variant in ('td','mixed'):
             with self.subTest(variant=variant):

@@ -9,6 +9,7 @@ from datetime import date, datetime, timedelta
 
 from selenium.common.exceptions import NoAlertPresentException, StaleElementReferenceException, TimeoutException
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import Select, WebDriverWait
 
 
@@ -258,10 +259,19 @@ class AttendancePage:
         for field, target in targets.items():
             inputs = pairs[0 if field == 'checkin' else 1]
             for element, value in zip(inputs, (target.hour, target.minute)):
-                element.clear()
+                element.click()
+                element.send_keys(Keys.CONTROL, 'a')
+                element.send_keys(Keys.BACKSPACE)
                 element.send_keys(f"{value:02d}")
-            if [i.get_attribute('value').zfill(2) for i in inputs] != [f'{target.hour:02d}', f'{target.minute:02d}']:
-                raise RuntimeError('입력한 시간이 일치하지 않아 저장을 중단합니다.')
+                element.send_keys(Keys.TAB)
+            def input_matches(_):
+                return parse_time(':'.join(str(i.get_attribute('value') or '').strip() for i in inputs))==(target.hour,target.minute)
+            try:
+                WebDriverWait(self.driver,3,poll_frequency=0.1).until(input_matches)
+            except TimeoutException as error:
+                actual=':'.join(re.sub(r'[^0-9\s]', '?',str(i.get_attribute('value') or ''))[:8] for i in inputs)
+                name='출근' if field=='checkin' else '퇴근'
+                raise RuntimeError(f'{name} 입력값이 다릅니다: 예정 {target:%H:%M} / 입력칸 {actual}. 저장하지 않았습니다.') from error
         if any(i.get_attribute("value") != value for i, value in values):
             raise RuntimeError("대상 외 입력값이 바뀌어 저장을 중단합니다.")
         current = self.record(day)

@@ -259,12 +259,24 @@ def create_driver():
         driver._workday_before_write = before_site_write
         driver._workday_check_response = lambda: check_site_response(driver)
         return driver
-    if os.path.exists(DRIVER_PATH):
+    os_manager = QuietChromeOSManager()
+    bundled_available=os.path.exists(DRIVER_PATH)
+    if bundled_available:
+        try:
+            browser_version=os_manager.get_browser_version_from_os()
+            probe=subprocess.run([DRIVER_PATH,'--version'],capture_output=True,text=True,
+                                 timeout=5,creationflags=subprocess.CREATE_NO_WINDOW)
+            match=re.search(r'ChromeDriver\s+(\d+)\.',probe.stdout)
+            if browser_version and match and browser_version.split('.')[0]!=match.group(1):
+                bundled_available=False
+                log_event(f'Chrome {browser_version.split(".")[0]} / 포함 드라이버 {match.group(1)}: 호환 드라이버를 사용합니다.')
+        except (OSError,subprocess.SubprocessError):
+            pass
+    if bundled_available:
         try:
             return prepared(webdriver.Chrome(options=options, service=Service(DRIVER_PATH, popen_kw={"creation_flags": subprocess.CREATE_NO_WINDOW})))
         except Exception as bundled_error:
-            log_event(f"포함된 ChromeDriver 사용 실패, 자동 갱신 시도: {bundled_error}")
-    os_manager = QuietChromeOSManager()
+            log_event(f"포함된 ChromeDriver 시작 실패, 호환 드라이버 확인: {type(bundled_error).__name__}: {str(bundled_error).splitlines()[0]}")
     cache = DriverCacheManager(os_system_manager=os_manager)
     path = ChromeDriverManager(cache_manager=cache, os_system_manager=os_manager).install()
     return prepared(webdriver.Chrome(options=options, service=Service(path, popen_kw={"creation_flags": subprocess.CREATE_NO_WINDOW})))

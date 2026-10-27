@@ -64,17 +64,31 @@ public static class WorkdayGuardian {
         try { File.AppendAllText(Path.Combine(data, "guardian.log"), DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " " + text + Environment.NewLine); } catch { }
     }
     static void Write(string path, object value) {
-        string temporary = path + ".new";
-        File.WriteAllText(temporary, Json.Serialize(value));
-        if (File.Exists(path)) File.Replace(temporary, path, null); else File.Move(temporary, path);
+        string temporary = path + ".new." + Guid.NewGuid().ToString("N");
+        try {
+            File.WriteAllText(temporary, Json.Serialize(value));
+            for (int attempt = 0; ; attempt++) {
+                try {
+                    if (File.Exists(path)) File.Replace(temporary, path, null); else File.Move(temporary, path);
+                    return;
+                } catch (IOException) {
+                    if (attempt >= 5) throw;
+                    Thread.Sleep(20 * (attempt + 1));
+                }
+            }
+        } finally { try { if (File.Exists(temporary)) File.Delete(temporary); } catch { } }
     }
     static void Status(string state, string error) {
-        Write(Path.Combine(data, "guardian-status.json"), new {
+        try { Write(Path.Combine(data, "guardian-status.json"), new {
             pid = Process.GetCurrentProcess().Id,
             worker_pid = child == null || child.HasExited ? 0 : child.Id,
             state = state, restart_count = failures.Count, launches = launches,
             updated_utc = DateTime.UtcNow.ToString("o"), last_error = error
-        });
+        }); } catch (IOException failure) {
+            Log("status write deferred: guardian-status.json: " + failure.GetType().Name + ": " + failure.Message);
+        } catch (UnauthorizedAccessException failure) {
+            Log("status write deferred: guardian-status.json: " + failure.GetType().Name + ": " + failure.Message);
+        }
     }
     static bool Stopped() {
         if (File.Exists(Path.Combine(data, "automation.stop")) || File.Exists(Path.Combine(data, "update.pause"))) return true;
