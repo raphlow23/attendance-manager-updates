@@ -97,6 +97,17 @@ try:
     assert trip_records[0]['start']=='09:00' and trip_records[0]['end']=='18:00' and trip_records[1]['end']=='11:00'
     try:trips.run_job(app,dict(operation='submit',review_id=review['review_id'],total=30000,rows=chosen));raise AssertionError('Review replay allowed')
     except ValueError:pass
+    for key in ('2026-10-14','2026-10-15','2026-10-16'):attendance.append(dict(date=key,checkin='08:35',checkout='18:00',note=''))
+    partial=trips.run_job(app,dict(operation='scan',month='2026-10',total=80000))
+    plans=[dict(date=r['date'],selected=r['date']>='2026-10-14',hours=2 if r['date']=='2026-10-14' else 4,start_hour=13,location='직접 입력 장소',purpose='등록할 목적') for r in partial['rows']]
+    partial=trips.run_job(app,dict(operation='inspect',review_id=partial['review_id'],total=80000,rows=plans))
+    assert partial['ready'],partial
+    for r in plans:
+     if r['date']=='2026-10-15':r['purpose']='   '
+     if r['date']=='2026-10-16':r['selected']=False
+    result=trips.run_job(app,dict(operation='submit',review_id=partial['review_id'],total=80000,rows=plans))
+    assert result['ok'] and [r['date'] for r in result['rows']]==['2026-10-14'] and result['summary']['remaining_amount']==40000,result
+    assert [r['date'] for r in trip_records]==['2026-10-07','2026-10-13','2026-10-14']
     driver,_=connect()
     try:
      direct_trip_landing=True
@@ -128,5 +139,5 @@ try:
      assert len(rejected)==1 and rejected[0]['status'].startswith('확인 필요:') and statuses[rows[0]['date']]['status']=='uncertain',rejected
      assert len(ot_records)==3 and ot_records[0]['purpose']=='수정한 새 근무목적'
     finally:driver.quit()
-   print('JOURNAL_BROWSER_OK: trip workflow + work-log direct form + user-supplied direct URL without menu links; overtime purpose absent from list / success page without history / observed-page refresh / two sequential POSTs / existing date purpose updated once / uncertain missing date added / detail purpose verified / no duplicate dates; no target-site requests')
+   print('JOURNAL_BROWSER_OK: trip workflow + unchecked/blank-purpose exclusions and partial-budget warning + work-log direct form + user-supplied direct URL without menu links; overtime purpose absent from list / success page without history / observed-page refresh / two sequential POSTs / existing date purpose updated once / uncertain missing date added / detail purpose verified / no duplicate dates; no target-site requests')
 finally:server.shutdown();server.server_close();thread.join()

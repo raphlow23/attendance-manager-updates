@@ -65,6 +65,19 @@ class TripPlanning(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'장소와 목적'):
             trips.merge_entries(self.rows(),[dict(date='2026-10-07',selected=True)],True)
 
+    def test_submission_excludes_blank_purpose_unchecked_and_omitted_dates(self):
+        rows=self.rows()
+        for row in rows:row['selected']=True
+        entries=[dict(rows[0],selected=True,purpose='   ',location='장소'),dict(rows[1],selected=False,purpose='작성한 목적',location='장소')]
+        result=trips.submission_rows(rows,entries)
+        self.assertFalse(any(r['selected'] for r in result))
+    def test_submission_keeps_only_checked_purpose_and_requires_its_location(self):
+        rows=self.rows();entry=dict(rows[0],selected=True,purpose='등록 목적',location='장소')
+        result=trips.submission_rows(rows,[entry])
+        self.assertEqual([r['date'] for r in result if r['selected']],[entry['date']])
+        with self.assertRaisesRegex(ValueError,'장소와 목적'):
+            trips.submission_rows(rows,[dict(entry,location='')])
+
 class TripJobs(unittest.TestCase):
     setUp=fixtures.StateTests.setUp
     tearDown=fixtures.StateTests.tearDown
@@ -123,12 +136,18 @@ class TripJobs(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'제외일 설정'):
                 trips.run_job(app,dict(operation='allocate',review_id='fixture',total=30000,rows=rows))
         driver.assert_not_called()
+    def test_all_excluded_dates_do_not_open_browser(self):
+        rows=self.prepare()
+        with patch('monthly_reconcile._connect') as connect:
+            with self.assertRaisesRegex(ValueError,'등록할 출장 날짜'):
+                trips.run_job(app,dict(operation='submit',review_id='fixture',total=30000,rows=[dict(r,purpose='') for r in rows]))
+        connect.assert_not_called()
     def test_submit_wrong_total_never_connects(self):
         rows=self.prepare()
         for row in rows:row.update(location='직접 입력',purpose='직접 입력')
         with patch.object(app,'create_driver') as driver:
-            with self.assertRaisesRegex(ValueError,'출장 추가 필요'):
-                trips.run_job(app,dict(operation='submit',review_id='fixture',total=50000,rows=rows))
+            with self.assertRaisesRegex(ValueError,'목표 초과'):
+                trips.run_job(app,dict(operation='submit',review_id='fixture',total=10000,rows=rows))
         driver.assert_not_called()
 
 if __name__=='__main__':unittest.main()

@@ -137,6 +137,18 @@ def merge_entries(rows,entries,require_details=False):
     return result
 
 
+def submission_rows(rows,entries):
+    # Only dates explicitly checked with a nonblank purpose may be submitted.
+    base=deepcopy(rows)
+    for row in base:row['selected']=False
+    normalized=[]
+    for entry in entries:
+        item=dict(entry)
+        item['selected']=bool(item.get('selected')) and bool(str(item.get('purpose') or '').strip())
+        normalized.append(item)
+    return merge_entries(base,normalized,True)
+
+
 def _rules(state,month):
     return {key:dict(vacation=bool(value.get('vacation')),exclude_overtime=bool(value.get('exclude_overtime')))
             for key,value in state.get('day_rules',{}).items() if key.startswith(month+'-')}
@@ -176,9 +188,9 @@ def run_job(app,job):
             chosen=[r for r in rows if r['selected'] and not r['blocked']]
     if operation=='submit':
         if not review.get('existing_verified'):raise ValueError('선택 완료를 눌러 기존 출장 내역을 먼저 확인하세요.')
-        rows=merge_entries(review['rows'],job.get('rows',[]),True)
+        rows=submission_rows(review['rows'],job.get('rows',[]))
         summary=summarize(rows,money(job['total']),review['existing_amount'])
-        if summary['remaining_amount']!=0:raise ValueError(summary['message']+' · 날짜/시간 선택을 완료하세요.')
+        if summary['remaining_amount']<0:raise ValueError(summary['message']+' · 날짜/시간 선택을 줄이세요.')
         if any(r.get('conflict') for r in rows):raise ValueError('연장 제외일의 기존 출장 시간을 사이트에서 먼저 확인하세요.')
         chosen=[r for r in rows if r['selected'] and not r['blocked']]
         if not chosen:raise ValueError('등록할 출장 날짜를 선택하세요.')
