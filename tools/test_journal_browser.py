@@ -50,7 +50,10 @@ class Handler(BaseHTTPRequestHandler):
         elif path=='/overtime':content=overtime_page()
         elif path=='/ot-edit':content=overtime_page(int(parse_qs(urlsplit(self.path).query)['index'][0]))
         elif path=='/ot-success':content=NAV+'<h2>신청 저장 완료</h2>'
-        elif path=='/attendance':content=NAV
+        elif path=='/attendance':
+            month=int(parse_qs(urlsplit(self.path).query).get('m',['10'])[0])
+            options=''.join(f'<option value="{n}"'+(' selected' if n==month else '')+f'>{n}월</option>' for n in range(1,13))
+            content=NAV+f'<h2>{month}월 근태현황</h2><form method="get" action="/attendance"><select name="m">'+options+'</select><button type="submit">조회</button></form>'
         else:self.send_response(404);self.end_headers();return
         self.send_response(200);self.send_header('Content-Type','text/html; charset=utf-8');self.end_headers();self.wfile.write(('<meta charset="utf-8">'+content).encode())
     def do_POST(self):
@@ -110,6 +113,10 @@ try:
     assert [r['date'] for r in trip_records]==['2026-10-07','2026-10-13','2026-10-14']
     driver,_=connect()
     try:
+     from attendance_recovery import AttendancePage
+     attendance_page=AttendancePage(driver,date(2026,10,27));attendance_page.open();attendance_page.choose_month(date(2026,9,1))
+     assert attendance_page.month_heading()==(None,9)
+     attendance_page.choose_month(date(2026,10,1));assert attendance_page.month_heading()==(None,10)
      direct_trip_landing=True
      from trip_site import TripPage
      TripPage(driver).open()
@@ -139,5 +146,5 @@ try:
      assert len(rejected)==1 and rejected[0]['status'].startswith('확인 필요:') and statuses[rows[0]['date']]['status']=='uncertain',rejected
      assert len(ot_records)==3 and ot_records[0]['purpose']=='수정한 새 근무목적'
     finally:driver.quit()
-   print('JOURNAL_BROWSER_OK: trip workflow + unchecked/blank-purpose exclusions and partial-budget warning + work-log direct form + user-supplied direct URL without menu links; overtime purpose absent from list / success page without history / observed-page refresh / two sequential POSTs / existing date purpose updated once / uncertain missing date added / detail purpose verified / no duplicate dates; no target-site requests')
+   print('JOURNAL_BROWSER_OK: attendance month 10→9→10 with native clicks disabled; trip workflow + unchecked/blank-purpose exclusions and partial-budget warning + work-log direct form + user-supplied direct URL without menu links; overtime purpose absent from list / success page without history / observed-page refresh / two sequential POSTs / existing date purpose updated once / uncertain missing date added / detail purpose verified / no duplicate dates; no target-site requests')
 finally:server.shutdown();server.server_close();thread.join()
