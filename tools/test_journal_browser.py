@@ -14,7 +14,7 @@ import main as app
 import business_trips as trips
 import overtime_requests as overtime
 
-trip_records=[];ot_records=[];posts=[];ignore_ot_update=False
+trip_records=[];ot_records=[];posts=[];ignore_ot_update=False;direct_trip_landing=False
 NAV='<a href="/attendance">근태관리</a><a href="/work">근무일지</a>'
 def inp(name,value='',placeholder=''):return f'<input name="{name}" value="{escape(str(value),quote=True)}" placeholder="{placeholder}">'
 def sel(name,options):return '<select name="'+name+'">'+''.join(f'<option value="{v}">{label}</option>' for v,label in options)+'</select>'
@@ -44,7 +44,8 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self,*args):pass
     def do_GET(self):
         path=urlsplit(self.path).path
-        if path=='/work':content=NAV+'<div><span><h3>출장일지</h3></span><a href="/trips">바로가기</a></div><div><span><h3>시간외근무신청</h3></span><a href="/overtime">바로가기</a></div>'
+        if path=='/work' and direct_trip_landing:content=trip_page()
+        elif path=='/work':content=NAV+'<div><span><h3>출장일지</h3></span><a href="/trips">바로가기</a></div><div><span><h3>시간외근무신청</h3></span><a href="/overtime">바로가기</a></div>'
         elif path=='/trips':content=trip_page()
         elif path=='/overtime':content=overtime_page()
         elif path=='/ot-edit':content=overtime_page(int(parse_qs(urlsplit(self.path).query)['index'][0]))
@@ -96,6 +97,11 @@ try:
     except ValueError:pass
     driver,_=connect()
     try:
+     direct_trip_landing=True
+     from trip_site import TripPage
+     TripPage(driver).open()
+     assert driver.current_url==base+'/work' and TripPage(driver).form()
+     direct_trip_landing=False
      page=overtime.OvertimePage(driver);page.open();rows=[]
      for d,checkout in ((1,'19:55'),(7,'20:30')):rows.append(dict(overtime.application_row(date(2026,10,d),{'checkin':'08:35','checkout':checkout}),purpose='직접  입력한 시간외 목적'))
      statuses={};result=overtime.submit_rows(page,rows,rows,statuses,lambda values:None)
@@ -117,5 +123,5 @@ try:
      assert len(rejected)==1 and rejected[0]['status'].startswith('확인 필요:') and statuses[rows[0]['date']]['status']=='uncertain',rejected
      assert len(ot_records)==3 and ot_records[0]['purpose']=='수정한 새 근무목적'
     finally:driver.quit()
-   print('JOURNAL_BROWSER_OK: trip workflow; overtime purpose absent from list / success page without history / observed-page refresh / two sequential POSTs / existing date purpose updated once / uncertain missing date added / detail purpose verified / no duplicate dates; no target-site requests')
+   print('JOURNAL_BROWSER_OK: trip workflow + direct work-log trip form without a menu link; overtime purpose absent from list / success page without history / observed-page refresh / two sequential POSTs / existing date purpose updated once / uncertain missing date added / detail purpose verified / no duplicate dates; no target-site requests')
 finally:server.shutdown();server.server_close();thread.join()
