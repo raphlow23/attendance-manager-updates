@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'app'))
-from attendance_changes import blocked, correct_reviewed, reviewed_targets, save_rule, summarize_month
+from attendance_changes import blocked, correct_reviewed, reviewed_targets, save_rule, summarize_month, run_job
 from attendance_recovery import AttendancePage
 import test_attendance as fixtures
 from test_edit_form import FakeSite
@@ -42,6 +42,33 @@ class ChangesTests(unittest.TestCase):
 class RulesTests(unittest.TestCase):
     setUp = fixtures.StateTests.setUp
     tearDown = fixtures.StateTests.tearDown
+
+    def test_delete_saved_date_removes_all_rule_flags_but_keeps_records(self):
+        key='2026-10-07'
+        before={'day_rules':{key:{'manual_hold':True},'2026-10-08':{'vacation':True}},
+                'runs':{key:{'checkout':{'status':'uncertain','target':'2026-10-07T19:15'}}},
+                'monthly_reconcile_journal':[{'date':key,'status':'uncertain'}],
+                'monthly_review':{'id':'old-preview'}}
+        app.save_json(app.STATE_FILE,before)
+        with patch.object(app,'create_driver') as driver:
+            result=run_job(app,dict(operation='rules_delete',dates=[key]))
+        driver.assert_not_called();self.assertTrue(result['ok'])
+        state=app.load_json(app.STATE_FILE,{})
+        self.assertNotIn(key,state['day_rules'])
+        self.assertTrue(state['day_rules']['2026-10-08']['vacation'])
+        self.assertEqual(state['runs'],before['runs'])
+        self.assertEqual(state['monthly_reconcile_journal'],before['monthly_reconcile_journal'])
+        self.assertNotIn('monthly_review',state)
+        self.assertEqual(state['deleted_day_rules'][0]['date'],key)
+        run_job(app,dict(operation='rules_delete',dates=[key]))
+        self.assertEqual(len(app.load_json(app.STATE_FILE,{})['deleted_day_rules']),1)
+
+    def test_delete_invalid_date_is_atomic(self):
+        before={'day_rules':{'2026-10-07':{'exclude_overtime':True}}}
+        app.save_json(app.STATE_FILE,before)
+        with self.assertRaises(ValueError):
+            run_job(app,dict(operation='rules_delete',dates=['2026-10-07','invalid']))
+        self.assertEqual(app.load_json(app.STATE_FILE,{}),before)
 
     def test_bulk_rule_save_and_clear_keeps_history_and_site_records(self):
         days=['2026-10-23','2026-10-26','2026-11-02']

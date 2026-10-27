@@ -68,6 +68,30 @@ def save_rule(app, job):
     return {'ok': True, 'message': f'선택 날짜 {len(days)}개의 제외 설정을 저장했습니다. 기존 사이트 기록은 바뀌지 않습니다.'}
 
 
+def delete_rules(app, job):
+    dates = job.get('dates')
+    if not isinstance(dates, list) or not dates or len(dates) > 366:
+        raise ValueError('삭제할 저장 날짜를 선택하세요.')
+    keys = sorted({date.fromisoformat(value).isoformat() for value in dates})
+    removed = []
+    with app.file_lock('action', timeout=120), app.file_lock('state'):
+        state = app.load_json(app.STATE_FILE, {})
+        rules = state.get('day_rules', {})
+        for key in keys:
+            if key not in rules:
+                continue
+            previous = rules.pop(key)
+            state.setdefault('deleted_day_rules', []).append(dict(
+                date=key, rule=previous, at=datetime.now().isoformat(timespec='seconds')))
+            removed.append(key)
+        if removed:
+            # A displayed proposal must be queried again after deleting rules.
+            state.pop('monthly_review', None)
+            app.save_json(app.STATE_FILE, state)
+    app.log_event(f'저장 날짜 설정 {len(removed)}개 삭제 · 사이트 변경 없음')
+    return dict(ok=True, message=f'저장 목록에서 {len(removed)}개를 삭제했습니다. 사이트 출퇴근 기록은 유지됩니다.')
+
+
 def reviewed_targets(job, today):
     day = date.fromisoformat(job['date'])
     if day > today:
@@ -140,8 +164,10 @@ def run_job(app, job):
     operation = job.get('operation')
     if operation == 'rules':
         result = save_rule(app, job)
-        result['message']='설정을 저장했습니다. 사이트 반영은 선택 월 조회·자동 정리를 눌러 주세요.'
+        result['message']='설정을 저장했습니다. 수정 목록을 조회하고 선택 내역 정리를 눌러 사이트에 반영하세요.'
         return result
+    if operation == 'rules_delete':
+        return delete_rules(app,job)
     if operation == 'reconcile':
         from monthly_reconcile import run
         return run(app, [job['month']])

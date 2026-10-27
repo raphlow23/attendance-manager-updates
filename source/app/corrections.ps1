@@ -86,7 +86,8 @@ foreach($control in @($form.Controls)){
 $grid.Top=390;$grid.Height=180;$summaryLabel.Top=575
 
 $vacation.Location=New-Object Drawing.Point(245,302);$exclude.Top=302;$saveRule.Top=298
-$rulesGrid.Location=New-Object Drawing.Point(650,45);$rulesGrid.Size=New-Object Drawing.Size(360,245)
+$rulesGrid.Location=New-Object Drawing.Point(650,45);$rulesGrid.Size=New-Object Drawing.Size(360,205)
+$deleteRule=Button '선택 항목 삭제' 650 255 360
 $rulesGrid.Columns['date'].HeaderText='저장 날짜';$rulesGrid.Columns['date'].FillWeight=130
 $rulesGrid.Columns['hold'].HeaderText='처리 상태'
 $calendar=New-Object Windows.Forms.Panel
@@ -242,7 +243,7 @@ function Start-Job($job) {
  $script:operation=$job.operation
  $script:worker=Start-WorkdayHiddenProcess $python "`"$(Join-Path $PSScriptRoot 'main.py')`" --attendance-job `"$script:jobPath`"" $PSScriptRoot
  foreach($c in $form.Controls) { if($c -ne $status) { $c.Enabled=$false } }
- $status.Text=if($Job.operation -eq 'rules'){'달력 설정 저장 중입니다.'}else{'사이트 처리 중입니다. 완료될 때까지 기다려 주세요.'}; $timer.Start()
+ $status.Text=if($Job.operation -in @('rules','rules_delete')){'저장 날짜 설정을 변경 중입니다. 사이트에는 접속하지 않습니다.'}else{'사이트 처리 중입니다. 완료될 때까지 기다려 주세요.'}; $timer.Start()
 }
 $dayPicker.Add_ValueChanged({ Read-Rule })
 $vacation.Add_CheckedChanged({if($vacation.Checked){$exclude.Checked=$false}})
@@ -251,6 +252,11 @@ $saveRule.Add_Click({try {
  if($script:chosenDates.Count -eq 0){throw '달력에서 저장할 날짜를 선택하세요. 여러 날짜를 클릭할 수 있습니다.'}
  Start-Job @{operation='rules';dates=@($script:chosenDates|Sort-Object);vacation=$vacation.Checked;exclude_overtime=$exclude.Checked}
 }catch{ $status.Text=$_.Exception.Message }})
+$deleteRule.Add_Click({try {
+ if($rulesGrid.SelectedRows.Count -eq 0){throw '오른쪽 저장 날짜 목록에서 삭제할 항목을 선택하세요.'}
+ $key=[string]$rulesGrid.SelectedRows[0].Cells['date'].Value
+ Start-Job @{operation='rules_delete';dates=@($key)}
+}catch{$status.Text=$_.Exception.Message}})
 function Selected-Month { [DateTime]::ParseExact([string]$month.SelectedItem,'yyyy년 MM월',[Globalization.CultureInfo]::InvariantCulture).ToString('yyyy-MM') }
 $scan.Add_Click({try {$summaryLabel.Text='수정 예정 목록을 조회 중입니다.';$grid.Rows.Clear();$script:snapshot=@{};$script:reviewId=$null;Start-Job @{operation='reconcile';month=(Selected-Month)}}catch{$status.Text=$_.Exception.Message}})
 $month.Add_SelectedIndexChanged({$grid.Rows.Clear();$script:snapshot=@{};$script:reviewId=$null;$apply.Enabled=$false;$selected.Text='조회 후 행 선택';$summaryLabel.Text='사이트 연장 기록: 해당 월을 조회하세요.'})
@@ -278,8 +284,8 @@ $timer.Add_Tick({
    if(-not $resultError -or $result.rows){Set-ReviewView $result}
   }else{
    $status.Text=$result.message;$grid.Rows.Clear();$script:snapshot=@{};$script:reviewId=$null
-   if($script:operation -eq 'rules'){$script:chosenDates.Clear()}
-   $summaryLabel.Text='설정 저장 완료. 수정 목록을 조회해 주세요.'
+   if($script:operation -in @('rules','rules_delete')){$script:chosenDates.Clear();$vacation.Checked=$false;$exclude.Checked=$false}
+   $summaryLabel.Text='설정 변경 완료. 수정 목록을 조회해 주세요.'
   }
   Refresh-RuleList
   if($resultError){throw $resultError}
@@ -331,6 +337,11 @@ if($SelfTest){
  if($script:chosenDates.Count -ne 2 -or $script:calendarMonth.Month -ne 11){throw '달력 다중 선택 보존 실패'}
  [void]$clearDates.GetType().GetMethod('OnClick',[Reflection.BindingFlags]'Instance,NonPublic').Invoke($clearDates,@([EventArgs]::Empty));if($script:chosenDates.Count -ne 0){throw '달력 선택 해제 실패'}
  $script:calendarMonth=[DateTime]'2026-10-01'
+ function Start-Job($job){$script:testDeleteJob=$job}
+ Set-RuleRows $fixtureRules
+ $rulesGrid.Rows[0].Selected=$true
+ [void]$deleteRule.GetType().GetMethod('OnClick',[Reflection.BindingFlags]'Instance,NonPublic').Invoke($deleteRule,@([EventArgs]::Empty))
+ if($script:testDeleteJob.operation -ne 'rules_delete' -or $script:testDeleteJob.dates[0] -ne '2026-10-29'){throw '저장 날짜 삭제 버튼 검사 실패'}
  $fixtureReview=@{plan_id='ui-fixture';target_days=10;message='수정 예정 목록입니다. 변경 시간을 직접 편집할 수 있습니다.';all_rows=@(@{date='2026-10-07';checkin='08:35';checkout='19:20';eligible=$true});rows=@(@{date='2026-10-07';before=@{checkin='08:35';checkout='19:20';note='기존 비고'};after=@{checkin='09:00';checkout='18:00'};reason='연장근무 제외';status='수정 예정';selectable=$true;blocked=$false})}
  Set-ReviewView $fixtureReview
  if($grid.Rows.Count -ne 1 -or -not $apply.Enabled){throw '수정 목록 선택 실패'}
