@@ -134,6 +134,27 @@ class ApplyTests(unittest.TestCase):
     setUp = fixtures.StateTests.setUp
     tearDown = fixtures.StateTests.tearDown
 
+    def test_empty_past_hold_is_cleared_without_creating_a_workday(self):
+        key='2026-10-01'
+        app.save_json(app.STATE_FILE, {'day_rules': {key: {'manual_hold': True, 'vacation': True}},
+                                      'monthly_reconcile_journal': [{'date':key,'status':'uncertain'}]})
+        rows=[row(key, ' : ', ' : ')]
+        cleared=monthly.clear_empty_holds(app, rows, date(2026,10,27))
+        self.assertEqual(cleared,[key])
+        state=app.load_json(app.STATE_FILE,{})
+        self.assertFalse(state['day_rules'][key]['manual_hold'])
+        self.assertTrue(state['day_rules'][key]['vacation'])
+        self.assertEqual(state['monthly_reconcile_journal'][0]['status'],'empty_record_confirmed')
+        self.assertNotIn('runs',state)
+        plan=monthly.build_plan(rows,state['day_rules'],{},date(2026,10,27),lambda d:True)
+        self.assertEqual(plan['changes'],[])
+
+    def test_present_or_unknown_or_today_records_keep_their_hold(self):
+        rows=[row('2026-10-01','18:00'),row('2026-10-02','확인중',':'),row('2026-10-27',':',':')]
+        app.save_json(app.STATE_FILE, {'day_rules':{r['date']:{'manual_hold':True} for r in rows}})
+        self.assertEqual(monthly.clear_empty_holds(app,rows,date(2026,10,27)),[])
+        self.assertTrue(all(r['manual_hold'] for r in app.load_json(app.STATE_FILE,{})['day_rules'].values()))
+
     def test_startup_runs_checkin_then_month_sync_then_checkout(self):
         calls = []
         def scheduled(mode, **kw):

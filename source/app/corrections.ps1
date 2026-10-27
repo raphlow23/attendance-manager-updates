@@ -229,6 +229,7 @@ $timer.Add_Tick({
    foreach($row in $result.rows){
     $script:snapshot[$row.date]=@{checkin=$row.checkin;checkout=$row.checkout;note=$row.note}
     $ruleText=if($row.rule.manual_hold){'자동 처리 보류 · 사이트 확인'}elseif($row.rule.vacation){'휴가'}elseif($row.rule.exclude_overtime){'연장 제외'}else{''}
+    if($row.empty_record -and -not $row.rule.manual_hold){$ruleText=if($ruleText){$ruleText+' · 기록 없음'}else{'기록 없음 · 변경 안 함'}}
     [void]$grid.Rows.Add($row.date,$row.checkin,$row.checkout,$ruleText,$row.note)
    }
    $status.Text=if($script:operation -eq 'reconcile'){$result.message}else{'월 기록 조회 완료'}

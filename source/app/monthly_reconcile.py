@@ -23,6 +23,36 @@ def require_site(app):
         raise ValueError('월 자동 정리는 사용자가 확인한 대상 사이트에서만 실행합니다.')
 
 
+def clear_empty_holds(app, rows, today):
+    """Resolve only local holds after a fresh, fully empty past-day read.
+
+    This never writes to the site or creates a missing workday. Today's records
+    and unrecognized displays remain held because they may still be in flight.
+    """
+    cleared = []
+    with app.file_lock('state'):
+        state = app.load_json(app.STATE_FILE, {})
+        for row in rows:
+            key = row['date']
+            rule = state.get('day_rules', {}).get(key, {})
+            if (not rule.get('manual_hold') or date.fromisoformat(key) >= today
+                    or not is_blank_time(row['checkin']) or not is_blank_time(row['checkout'])):
+                continue
+            rule['manual_hold'] = False
+            rule['hold_resolution'] = dict(status='empty_record', at=datetime.now().isoformat(timespec='seconds'))
+            for field in ('monthly_reconcile_journal', 'attendance_corrections'):
+                for entry in reversed(state.get(field, [])):
+                    if entry.get('date') == key and entry.get('status') in ('sending', 'checking', 'uncertain'):
+                        entry.update(status='empty_record_confirmed', resolution='사이트 출퇴근 모두 빈 기록 · 변경 안 함')
+                        break
+            cleared.append(key)
+        if cleared:
+            app.save_json(app.STATE_FILE, state)
+    for key in cleared:
+        app.log_event(f'{key} 빈 근태 기록 확인: 보류 해제, 사이트 기록 변경 없음')
+    return cleared
+
+
 def build_plan(rows, rules, settings, today, is_workday, rng=None):
     """Plan from completed fictional records; never create an absent workday."""
     rng = rng or random.SystemRandom()
@@ -39,6 +69,10 @@ def build_plan(rows, rules, settings, today, is_workday, rng=None):
         rule = rules.get(key, {})
         ci, co = parse_time(row['checkin']), parse_time(row['checkout'])
         if day > today or not is_workday(day):
+            skipped.append(key)
+            continue
+        if (is_blank_time(row['checkin']) and is_blank_time(row['checkout'])
+                and (not rule.get('manual_hold') or day < today)):
             skipped.append(key)
             continue
         if rule.get('manual_hold'):
@@ -193,6 +227,11 @@ def run(app, months=None, background=False):
                         break
                     row = page.record(day)
                     rows.append(dict(date=str(day), **{k: row[k] for k in FIELDS}))
+                cleared = clear_empty_holds(app, rows, today)
+                if cleared:
+                    with app.file_lock('state'):
+                        state = app.load_json(app.STATE_FILE, {})
+                        rules = state.get('day_rules', {})
                 plan = build_plan(rows, rules, month_settings, today, app.is_workday)
                 done = apply_plan(app, page, plan, month, background)
                 # Verify the whole resulting month, not just successful clicks.
@@ -205,7 +244,7 @@ def run(app, months=None, background=False):
                     raise RuntimeError('월 정리 후 기록이 예상과 다릅니다. 다시 조회하세요.')
                 result = dict(month=month, changed=len(done), target_days=verified['target_days'],
                               overtime_days=verified['overtime_days'], remaining_days=verified['remaining_days'],
-                              skipped_dates=verified['skipped_dates'])
+                              skipped_dates=verified['skipped_dates'], empty_holds_cleared=len(cleared))
                 with app.file_lock('state'):
                     state = app.load_json(app.STATE_FILE, {})
                     state.setdefault('monthly_reconcile_results', {})[month] = dict(result, at=datetime.now().isoformat(timespec='seconds'))
@@ -213,9 +252,10 @@ def run(app, months=None, background=False):
                     state['reconcile_pending_months'] = sorted(pending)
                     app.save_json(app.STATE_FILE, state)
                 results.append(result)
-                display_rows = [dict(row, rule=state.get('day_rules', {}).get(row['date'], {})) for row in final_rows]
+                display_rows = [dict(row, rule=state.get('day_rules', {}).get(row['date'], {}),
+                                     empty_record=is_blank_time(row['checkin']) and is_blank_time(row['checkout'])) for row in final_rows]
                 app.log_event(f'{month} 월 자동 정리: {result["changed"]}건, 연장 {result["overtime_days"]}/{result["target_days"]}일, 부족 {result["remaining_days"]}일')
-            summary = ' / '.join(f'{r["month"]} 수정 {r["changed"]}건 · 연장 {r["overtime_days"]}/{r["target_days"]}일 · 후보 부족 {r["remaining_days"]}일' for r in results)
+            summary = ' / '.join(f'{r["month"]} 수정 {r["changed"]}건 · 연장 {r["overtime_days"]}/{r["target_days"]}일 · 후보 부족 {r["remaining_days"]}일 · 빈 기록 보류 해제 {r["empty_holds_cleared"]}건' for r in results)
             with app.file_lock('state'):
                 state = app.load_json(app.STATE_FILE, {})
             pending = [key for key in state.get('repair_pending', []) if date.fromisoformat(key) < today
