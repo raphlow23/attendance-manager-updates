@@ -18,6 +18,12 @@ class TripNavigation(unittest.TestCase):
         driver.get.assert_called_once_with('http://sappd.kr/sappd_g6.php')
         driver.find_elements.assert_not_called();page.entry_control.assert_not_called()
 
+    def test_javascript_edit_control_is_clicked_without_navigation(self):
+        driver=Mock(current_url='http://sappd.kr/sappd_g6.php');control=Mock()
+        control.get_attribute.return_value='javascript:editTrip(1)'
+        TripPage(driver).activate(control)
+        driver.get.assert_not_called();driver.execute_script.assert_called_once()
+
     def test_https_session_is_not_downgraded_for_direct_trip_entry(self):
         driver=Mock(current_url='https://sappd.kr/sappd_g4.php')
         driver.get.side_effect=lambda url:setattr(driver,'current_url',url)

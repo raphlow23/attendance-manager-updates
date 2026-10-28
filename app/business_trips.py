@@ -25,17 +25,21 @@ def minutes(value):
     return parsed[0]*60+parsed[1] if parsed else None
 
 
-def window(row,hours=None,start_hour=None):
+def window(row,hours=None,start_hour=None,start_minute=0,end=None):
     hours=row.get('hours',4) if hours is None else hours
     if type(hours) is not int or hours not in (2,4):raise ValueError('출장 인정시간은 2시간 또는 4시간입니다.')
     ci=minutes(row['checkin']);co=minutes(row['checkout'])
     start_hour=(9 if row.get('event_day') else 13) if start_hour is None else start_hour
     end_hour=18 if row.get('event_day') and start_hour==9 and hours==4 and row.get('end','18:00')=='18:00' else start_hour+hours
-    if type(start_hour) is not int or not 0<=start_hour<=23 or end_hour>23:
+    if type(start_hour) is not int or not 0<=start_hour<=23 or type(start_minute) is not int or not 0<=start_minute<60:
         raise ValueError('출발 시각과 복귀 시각을 확인하세요.')
-    if ci is None or co is None or start_hour*60<ci or end_hour*60>co:
+    start=start_hour*60+start_minute
+    finish=minutes(end) if end is not None else end_hour*60+start_minute
+    if finish is None or finish>=1440 or finish-start<120 or (hours==2 and finish-start!=120) or (hours==4 and finish-start<240):
+        raise ValueError('복귀 시각은 출발 이후이며 인정시간(2시간/4시간)에 맞아야 합니다.')
+    if ci is None or co is None or start<ci or finish>co:
         raise ValueError(f'{row["date"]}: 출퇴근 시간 안에서 출발 시각을 선택하세요.')
-    return dict(hours=hours,start_hour=start_hour,start=f'{start_hour:02}:00',end=f'{end_hour:02}:00',amount=hours*RATE)
+    return dict(hours=hours,start_hour=start_hour,start_minute=start_minute,start=f'{start_hour:02}:{start_minute:02}',end=f'{finish//60:02}:{finish%60:02}',amount=hours*RATE)
 
 
 def existing_totals(records):
@@ -100,7 +104,7 @@ def allocate(rows,total,existing_amount=0,preferred_hours=4):
     if preferred_hours not in (2,4):raise ValueError('기본 출장 시간을 선택하세요.')
     result=deepcopy(rows)
     remaining=total-existing_amount
-    candidates=[r for r in result if r.get('selected') and not r['blocked'] and not r.get('is_existing')]
+    candidates=[r for r in result if r.get('selected') and not r['blocked'] and (not r.get('is_existing') or previous[r['date']].get('is_existing'))]
     states={0:[]}
     for row in candidates:
         choices=[]
@@ -128,11 +132,11 @@ def merge_entries(rows,entries,require_details=False):
         selected=bool(entry.get('selected'))
         if row['blocked'] and selected:raise ValueError(f'{key}: {row["status"]}')
         row.update(selected=selected,location=str(entry.get('location','')).strip(),purpose=str(entry.get('purpose','')).strip())
-        if row.get('is_existing'):
-            if selected and (entry.get('hours',row['hours'])!=row['hours'] or entry.get('start_hour',row['start_hour'])!=row['start_hour'] or entry.get('end',row['end'])!=row['end']):raise ValueError('기존 출장 수정은 장소·목적만 변경할 수 있습니다.')
-        elif not row['blocked']:
-            changed=window(dict(row,end=entry.get('end',row.get('end'))),entry.get('hours',row['hours']),entry.get('start_hour',row['start_hour']))
-            if entry.get('end') and entry['end']!=changed['end']:raise ValueError('출장 복귀 시간이 인정시간과 일치하지 않습니다.')
+        if row.get('is_existing') and not selected:continue
+        if row.get('is_existing') and entry.get('hours',row['hours'])!=row['hours']:
+            raise ValueError('기존 출장의 인정시간은 유지하고 출발·복귀 및 장소·목적을 수정하세요.')
+        if not row['blocked']:
+            changed=window(dict(row,end=entry.get('end',row.get('end'))),entry.get('hours',row['hours']),entry.get('start_hour',row['start_hour']),entry.get('start_minute',minutes(row['start'])%60),entry.get('end'))
             row.update(changed)
         if selected and require_details and (not row['location'] or not row['purpose']):raise ValueError(f'{key}: 출장 장소와 목적을 직접 입력하세요.')
         if len(row['location'])>500 or len(row['purpose'])>1000:raise ValueError('출장 장소 또는 목적이 너무 깁니다.')
@@ -234,14 +238,14 @@ def run_job(app,job):
                     state=app.load_json(app.STATE_FILE,{});state['trip_review']=review;app.save_json(app.STATE_FILE,state)
                 summary=summarize(rows,job.get('total',0),existing_amount)
                 days=len(existing_totals(existing)) if checked else 0
-                message=f'근태 날짜 조회 완료 · 기등록 {days}일 / {existing_amount:,}원 반영. 미등록 날짜를 추가 선택하세요. 기존 날짜는 장소·목적 수정만 가능합니다.' if checked else '근태 날짜는 조회했습니다. '+warning+' · 현재 금액은 임시 계산이며 선택 완료 시 반드시 확인합니다.'
+                message=f'근태 날짜 조회 완료 · 기등록 {days}일 / {existing_amount:,}원 반영. 미등록 날짜를 추가 선택하세요. 기존 날짜는 수정 버튼으로 출발·복귀와 장소·목적을 변경합니다.' if checked else '근태 날짜는 조회했습니다. '+warning+' · 현재 금액은 임시 계산이며 선택 완료 시 반드시 확인합니다.'
                 return dict(ok=True,review_id=review['id'],rows=rows,summary=summary,message=message,existing_checked=checked)
             trips=TripPage(driver);trips.open();existing=trips.existing(month);trips.check_options()
             existing_amount=sum(v['amount'] for v in existing_totals(existing).values())
             if operation=='inspect':
                 fresh_rows=make_rows(attendance,rules,existing,date.today())
                 previous={r['date']:r for r in rows}
-                entries=[dict(previous[r['date']]) for r in fresh_rows if r['date'] in previous and not r['blocked'] and not r.get('is_existing')]
+                entries=[dict(previous[r['date']]) for r in fresh_rows if r['date'] in previous and not r['blocked'] and (not r.get('is_existing') or previous[r['date']].get('is_existing'))]
                 rows=merge_entries(fresh_rows,entries)
                 if job.get('edit_existing'):
                     for row in rows:row['selected']=False
@@ -265,7 +269,7 @@ def run_job(app,job):
                 if row.get('is_existing'):
                     expected=[e for e in review['existing'] if e['date']==key]
                     if len(matches)!=1 or matches!=expected:raise ValueError(f'{key}: 기존 출장 내용이 달라져 수정을 중단합니다.')
-                    if all(' '.join(matches[0][field].split())==' '.join(row[field].split()) for field in ('location','purpose')):
+                    if all(' '.join(matches[0][field].split())==' '.join(row[field].split()) for field in ('location','purpose','start','end')):
                         row['status']='기존 내용 동일 · 유지';submitted.append(key)
                         with app.file_lock('state'):
                             state=app.load_json(app.STATE_FILE,{});state.setdefault('trip_applications',{})[key]=dict(status='success',row=row,source='기존 동일 내용 확인');app.save_json(app.STATE_FILE,state)

@@ -38,10 +38,10 @@ def trip_page(edit=None):
         form=form.replace('>확인</button>','>수정완료</button>')
         for name,word,value in [('place','출장장소',saved['location']),('purpose','출장목적',saved['purpose'])]:
             old=inp(name,value,'출장장소' if name=='place' else '출장목적을 구체적으로 입력하세요')
-            form=form.replace(old,'<table><tr><th>'+word+'</th><td>'+inp(name,value)+'</td></tr></table>')
+            form=form.replace(old,'<div><label>'+word[:2]+' '+word[2:]+' :</label><div>'+inp(name,value)+'</div></div>')
     body=body.replace('</tr>','<td>EDIT</td></tr>')
     for index in range(len(trip_records)):body=body.replace('EDIT','<a href="/trip-edit?index='+str(index)+'">수정</a>',1)
-    return NAV+'<h2>출장 등록하기</h2>'+form+'<h2>사용자님의 10월 출장일지</h2><table><thead><tr>'+heads+'</tr></thead><tbody>'+body+'</tbody></table>'
+    return NAV+'<h2>출장 등록하기</h2>'+((trip_page().split('<h2>출장 등록하기</h2>')[1].split('<h2>사용자님')[0]) if saved else '')+form+'<h2>사용자님의 10월 출장일지</h2><table><thead><tr>'+heads+'</tr></thead><tbody>'+body+'</tbody></table>'
 def overtime_page(edit=None):
     r=ot_records[edit] if edit is not None else None
     form='<form method="post" action="'+('/ot-update?index='+str(edit) if r else '/ot-save')+'">'
@@ -141,11 +141,11 @@ try:
     assert loaded['ready'] and sum(r['selected'] for r in loaded['rows'])==3,loaded
     edits=[dict(r,selected=r['date']=='2026-10-14') for r in loaded['rows']]
     edit=next(r for r in edits if r['selected']);assert edit['location']=='직접 입력 장소' and edit['purpose']=='등록할 목적'
-    edit.update(location='수정한 장소',purpose='수정한 출장 목적')
+    edit.update(location='수정한 장소',purpose='수정한 출장 목적',start_hour=12,start_minute=30,start='12:30',end='14:30')
     edited=trips.run_job(app,dict(operation='submit',review_id=loaded['review_id'],total=40000,rows=edits))
     assert edited['ok'] and edited['rows'][0]['status']=='수정 확인 완료',edited
     assert len(trip_records)==3 and trip_records[-1]['location']=='수정한 장소' and trip_records[-1]['purpose']=='수정한 출장 목적'
-    assert (trip_records[-1]['start'],trip_records[-1]['end'])==('13:00','15:00')
+    assert (trip_records[-1]['start'],trip_records[-1]['end'])==('12:30','14:30')
     assert [r for r in posts if r[0]=='trip-update']==[('trip-update','2026-10-14')]
     driver,_=connect()
     try:

@@ -48,6 +48,14 @@ class TripPlanning(unittest.TestCase):
         self.assertEqual(trips.window(row,2,14)['end'],'16:00')
         with self.assertRaises(ValueError):trips.window(row,4,16)
         with self.assertRaises(ValueError):trips.window(row,2,8)
+    def test_manual_minutes_and_return_survive_review(self):
+        row=self.rows()[1]
+        edited=trips.merge_entries([row],[dict(row,start_hour=12,start_minute=30,end='16:45')])[0]
+        self.assertEqual((edited['start'],edited['end']),('12:30','16:45'))
+        self.assertEqual(trips.merge_entries([edited],[dict(edited)])[0]['start'],'12:30')
+        with self.assertRaises(ValueError):trips.window(row,4,13,30,'17:00')
+        with self.assertRaises(ValueError):trips.window(row,4,13,30,'18:30')
+
     def test_existing_day_is_capped_at_four_hours_and_not_selected(self):
         old=[dict(date='2026-10-07',start='09:00',end='18:00')]
         result=trips.make_rows([attendance('2026-10-07')],{'2026-10-07':{'exclude_overtime':True}},old,date(2026,10,27))
@@ -87,8 +95,8 @@ class TripPlanning(unittest.TestCase):
         self.assertEqual(trips.summarize(rows,20000,20000)['remaining_amount'],0)
         edited=trips.submission_rows(rows,[dict(rows[0],location='새 장소',purpose='새 목적')])[0]
         self.assertEqual((edited['start'],edited['end']),('13:00','17:00'))
-        with self.assertRaisesRegex(ValueError,'장소·목적만'):
-            trips.submission_rows(rows,[dict(rows[0],start_hour=14)])
+        edited=trips.submission_rows(rows,[dict(rows[0],start_hour=14,end='18:00')])[0]
+        self.assertEqual((edited['start'],edited['end']),('14:00','18:00'))
     def test_existing_morning_trip_is_editable_on_a_short_attendance_day(self):
         old=[dict(date='2026-10-13',start='09:00',end='11:00',location='오전 장소',purpose='오전 목적')]
         row=trips.make_rows([attendance('2026-10-13',co='12:00')],{},old,date(2026,10,27))[0]

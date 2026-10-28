@@ -49,7 +49,7 @@ class TripPage:
     def __init__(self,driver):self.driver=driver;self.wait=WebDriverWait(driver,20)
     def activate(self,control):
         href=control.get_attribute('href')
-        if href:
+        if href and urlsplit(href).scheme in ('http','https') and not href.endswith('#'):
             source=urlsplit(self.driver.current_url);target=urlsplit(href)
             if (source.scheme,source.netloc)!=(target.scheme,target.netloc):raise RuntimeError('다른 사이트 링크는 열지 않습니다.')
             self.driver.get(href)
@@ -94,9 +94,23 @@ class TripPage:
                     if len(links)>1:break
         return one(matches,'출장일지 메뉴') if matches else False
     def text_fields(self,form,keyword):
-        return visible(form.find_elements(By.XPATH,f".//input[contains(@placeholder,'{keyword}')] | .//textarea[contains(@placeholder,'{keyword}')] | .//tr[./td[string-length(normalize-space(.))<15 and contains(translate(normalize-space(.),' ',''),'{keyword}')] or ./th[contains(translate(normalize-space(.),' ',''),'{keyword}')]]//*[self::input or self::textarea][not(@type='hidden') and not(@type='submit') and not(@type='button')]"))
+        return self.driver.execute_script('''const root=arguments[0],word=arguments[1],clean=s=>(s||'').replace(/\\s|:/g,'');
+        const fields=Array.from(root.querySelectorAll('input:not([type=hidden]):not([type=submit]):not([type=button]),textarea')).filter(e=>e.getClientRects().length);
+        return fields.filter(e=>{
+          if(clean(e.placeholder).includes(word)||clean(e.getAttribute('aria-label')).includes(word))return true;
+          if(Array.from(e.labels||[]).some(l=>clean(l.textContent).includes(word)))return true;
+          let p=e.parentElement;
+          for(let i=0;p&&root.contains(p)&&i<4;i++,p=p.parentElement){
+            if(p.querySelectorAll('input:not([type=hidden]):not([type=submit]):not([type=button]),textarea').length!==1)break;
+            if(clean(p.textContent).includes(word))return true;
+          }
+          return false;
+        });''',form,keyword)
     def form(self):
         forms=[f for f in visible(self.driver.find_elements(By.TAG_NAME,'form')) if self.text_fields(f,'출장장소') and self.text_fields(f,'출장목적')]
+        if len(forms)>1:
+            editing=[f for f in forms if any(norm(label(b)) in ('수정','수정하기','출장수정','출장수정하기','출장일지수정','수정완료') for b in visible(f.find_elements(By.CSS_SELECTOR,'button, input[type=submit]')))]
+            if len(editing)==1:return editing[0]
         return one(forms,'출장 등록·수정 폼') if forms else False
     def fields(self):
         form=self.form()
@@ -163,7 +177,12 @@ class TripPage:
             edit=one([c for c in controls if norm(label(c)) in ('수정','수정하기','출장수정','출장수정하기')],'기존 출장 수정 버튼')
             self.phase='기존 출장 수정 입력 화면 열기'
             self.activate(edit)
-            self.wait.until(lambda _:self.form())
+            try:
+                # The page may retain the new-entry form above the history.
+                # Wait for the selected record, not merely any visible form.
+                self.wait.until(lambda _:self.edit_matches(original))
+            except TimeoutException as error:
+                raise RuntimeError('기존 출장의 수정 버튼을 눌렀지만 해당 날짜의 수정 입력 화면을 확인하지 못했습니다. 신규 등록은 하지 않았습니다. 수정 화면 HTML 확인이 필요합니다.') from error
         self.phase='출장 입력값·저장 대상 확인'
         form,selects,dates,place,purpose,button=self.fields()
         action=form.get_attribute('action');source=urlsplit(self.driver.current_url);target=urlsplit(action)
@@ -173,12 +192,12 @@ class TripPage:
             if any(' '.join(input_value(field).split())!=' '.join(original[key].split()) for field,key in ((place,'location'),(purpose,'purpose'))):raise RuntimeError('수정 화면의 기존 장소·목적이 선택 내역과 다릅니다. 저장하지 않았습니다.')
             if [int(input_value(f)) for f in dates]!=[day.year,day.month,day.day]:raise RuntimeError('수정 화면 출장 날짜가 다릅니다.')
             if Select(selects[0]).first_selected_option.text.strip()!=CATEGORY or Select(selects[1]).first_selected_option.text.strip()!=TRANSPORT:raise RuntimeError('기존 출장 구분·이동수단을 확인하세요.')
-            for field,value in zip(selects[2:],(int(row['start'][:2]),int(row['start'][3:]),int(row['end'][:2]),int(row['end'][3:]))):
+            for field,value in zip(selects[2:],(int(original['start'][:2]),int(original['start'][3:]),int(original['end'][:2]),int(original['end'][3:]))):
                 if not re.fullmatch(fr'0*{value}\s*[시분]?',Select(field).first_selected_option.text.strip()):raise RuntimeError('수정 화면 출장 시간이 다릅니다.')
         else:
             select_text(self.driver,selects[0],CATEGORY);select_text(self.driver,selects[1],TRANSPORT)
             for element,value in zip(dates,(day.year,day.month,day.day)):set_value(self.driver,element,value)
-            for element,value in zip(selects[2:],(int(row['start'][:2]),0,int(row['end'][:2]),0)):select_number(self.driver,element,value)
+        for element,value in zip(selects[2:],(int(row['start'][:2]),int(row['start'][3:]),int(row['end'][:2]),int(row['end'][3:]))):select_number(self.driver,element,value)
         set_value(self.driver,place,row['location']);set_value(self.driver,purpose,row['purpose'])
         if form.get_attribute('action')!=action:raise RuntimeError('출장 저장 대상이 바뀌었습니다.')
         guard=getattr(self.driver,'_workday_before_write',None)
@@ -202,3 +221,11 @@ class TripPage:
                 return sum(all(' '.join(item[k].split())==' '.join(row[k].split()) for k in ('date','location','purpose','start','end')) and norm(item['category'])==CATEGORY and norm(item['transport'])==TRANSPORT for item in records)==1
             except StaleElementReferenceException:return False
         self.wait.until(confirmed)
+
+    def edit_matches(self,original):
+        try:
+            form,selects,dates,place,purpose,button=self.fields()
+            return (norm(label(button))!='확인' and
+                    [int(input_value(f)) for f in dates]==list(map(int,original['date'].split('-'))) and
+                    all(' '.join(input_value(f).split())==' '.join(original[k].split()) for f,k in ((place,'location'),(purpose,'purpose'))))
+        except (StaleElementReferenceException,RuntimeError,ValueError):return False
