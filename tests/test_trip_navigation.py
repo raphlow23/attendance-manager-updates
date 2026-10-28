@@ -1,12 +1,36 @@
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock,patch
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.common.by import By
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'app'))
-from trip_site import TripPage
+from trip_site import TripPage,select_number
+
+
+class DuplicateTimeOptions(unittest.TestCase):
+    def option(self,text,value):
+        return Mock(text=text,get_attribute=Mock(return_value=value))
+    def choose(self,options,expected):
+        select=Mock(options=options,first_selected_option=options[0])
+        with patch('trip_site.Select',return_value=select),patch('trip_site.set_value') as write:
+            select_number(Mock(),Mock(),13)
+            self.assertEqual(write.call_args.args[2],expected)
+    def test_saved_hour_prepended_to_generated_list(self):
+        self.choose([self.option('13','13'),self.option('13시','13')],'13')
+    def test_saved_hour_with_zero_padding(self):
+        self.choose([self.option('13','013'),self.option('13','13')],'13')
+    def test_identical_non_numeric_option_values(self):
+        self.choose([self.option('13','hour13'),self.option('13','hour13')],'hour13')
+    def test_different_opaque_values_are_still_rejected(self):
+        with patch('trip_site.Select',return_value=Mock(options=[self.option('13','a'),self.option('13','b')])),patch('trip_site.set_value') as write:
+            with self.assertRaises(RuntimeError):select_number(Mock(),Mock(),13)
+            write.assert_not_called()
+    def test_selected_label_is_checked_after_setting(self):
+        select=Mock(options=[self.option('13','13')],first_selected_option=self.option('14','14'))
+        with patch('trip_site.Select',return_value=select),patch('trip_site.set_value'):
+            with self.assertRaisesRegex(RuntimeError,'선택 후'):select_number(Mock(),Mock(),13)
 
 
 class TripNavigation(unittest.TestCase):

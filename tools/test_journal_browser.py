@@ -35,6 +35,9 @@ def trip_page(edit=None):
         for name,value in dict(kind='center',transport='public',sh=int(saved['start'][:2]),sm=int(saved['start'][3:]),eh=int(saved['end'][:2]),em=int(saved['end'][3:])).items():
             a=form.index('<select name="'+name+'">');b=form.index('</select>',a)
             form=form[:a]+form[a:b].replace('value="'+str(value)+'"','value="'+str(value)+'" selected')+form[b:]
+        # Reproduce saved option + generated list duplicates on the real site.
+        for name,value in dict(sh=int(saved['start'][:2]),sm=int(saved['start'][3:]),eh=int(saved['end'][:2]),em=int(saved['end'][3:])).items():
+            form=form.replace('<select name="'+name+'">','<select name="'+name+'"><option value="'+str(value)+'" selected>'+str(value)+'</option>',1)
         form=form.replace('>확인</button>','>수정</button>')
         # Actual edit screen: column headers over inputs, no placeholders.
         def field(name):

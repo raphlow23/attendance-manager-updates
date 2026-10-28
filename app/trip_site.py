@@ -42,8 +42,19 @@ def select_text(driver,element,text):
     set_value(driver,element,option.get_attribute('value'))
 
 def select_number(driver,element,number):
-    option=one([o for o in Select(element).options if re.fullmatch(fr'0*{number}\s*[시분월일]?',o.text.strip())],f'{number} 선택 항목')
+    matches=[o for o in Select(element).options if re.fullmatch(fr'0*{number}\s*[시분월일]?',o.text.strip())]
+    # Edit pages can prepend the saved value before the normal option list.
+    # Prefer a matching numeric value; identical duplicate values are equivalent.
+    numeric=[o for o in matches if re.fullmatch(r'\d+',o.get_attribute('value') or '') and int(o.get_attribute('value'))==number]
+    if numeric:
+        exact=[o for o in numeric if o.get_attribute('value')==str(number)]
+        option=(exact or numeric)[0]
+    else:
+        by_value={o.get_attribute('value'):o for o in matches}
+        option=one(list(by_value.values()),f'{number} 선택 항목')
     set_value(driver,element,option.get_attribute('value'))
+    if not re.fullmatch(fr'0*{number}\s*[시분월일]?',Select(element).first_selected_option.text.strip()):
+        raise RuntimeError(f'{number} 선택 후 표시된 시간을 확인하지 못했습니다.')
 
 class TripPage:
     def __init__(self,driver):self.driver=driver;self.wait=WebDriverWait(driver,20)
