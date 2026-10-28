@@ -1,5 +1,5 @@
 ﻿[CmdletBinding()]
-param([switch]$SelfTest,[string]$PreviewPath,[long]$OwnerHandle=0)
+param([switch]$SelfTest,[switch]$InteractiveTest,[string]$PreviewPath,[long]$OwnerHandle=0)
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -14,6 +14,22 @@ public class WorkdayTripCheckCell : DataGridViewCheckBoxCell {
 }
 public class WorkdayTripEntryGrid : DataGridView {
     public bool PurposeEntryMode { get; set; }
+    protected override void OnCellBeginEdit(DataGridViewCellCancelEventArgs e) {
+        base.OnCellBeginEdit(e);
+        // Checkboxes have no buffered editor: mouse/Space commits the value once.
+        if(Rows[e.RowIndex].Cells[e.ColumnIndex] is DataGridViewCheckBoxCell) e.Cancel=true;
+    }
+    private bool ToggleCheckKey(Keys keyData) {
+        if(keyData!=Keys.Space || CurrentCell==null || !(CurrentCell is DataGridViewCheckBoxCell)) return false;
+        ToggleCheck(CurrentCell);return true;
+    }
+    private void ToggleCheck(DataGridViewCell cell) {
+        if(cell.ReadOnly || !Enabled) return;
+        if(!EndEdit()) return;
+        CurrentCell=cell;
+        cell.Value=!(cell.Value is bool && (bool)cell.Value);
+        InvalidateCell(cell);
+    }
     public void TestCellClick(int row,int column) {
         OnCellMouseClick(new DataGridViewCellMouseEventArgs(column,row,2,2,new MouseEventArgs(MouseButtons.Left,1,2,2,0)));
     }
@@ -22,11 +38,7 @@ public class WorkdayTripEntryGrid : DataGridView {
         if(e.RowIndex>=0 && e.ColumnIndex>=0 && e.Button==MouseButtons.Left) {
             DataGridViewCell cell=Rows[e.RowIndex].Cells[e.ColumnIndex];
             if(cell is DataGridViewCheckBoxCell) {
-                if(!cell.ReadOnly && Enabled) {
-                    EndEdit(); CurrentCell=cell;
-                    cell.Value=!(cell.Value is bool && (bool)cell.Value);
-                    EndEdit();
-                }
+                ToggleCheck(cell);
                 return;
             }
         }
@@ -43,10 +55,10 @@ public class WorkdayTripEntryGrid : DataGridView {
         base.OnCellContentClick(e);
     }
     protected override bool ProcessDialogKey(Keys keyData) {
-        return MoveEntryKey(keyData) || base.ProcessDialogKey(keyData);
+        return ToggleCheckKey(keyData) || MoveEntryKey(keyData) || base.ProcessDialogKey(keyData);
     }
     protected override bool ProcessDataGridViewKey(KeyEventArgs e) {
-        return MoveEntryKey(e.KeyData) || base.ProcessDataGridViewKey(e);
+        return ToggleCheckKey(e.KeyData) || MoveEntryKey(e.KeyData) || base.ProcessDataGridViewKey(e);
     }
     public bool MoveEntryKey(Keys keyData) {
         Keys code=keyData & Keys.KeyCode;
@@ -97,7 +109,7 @@ $total=New-Object Windows.Forms.NumericUpDown;$total.Location=New-Object Drawing
 $scan=Make-Button '출퇴근 일정 조회' 855 55 355
 $note=Text-Label '구분: 센터 / 이동: 대중교통 · 행사 기본 09~18시 / 일반 기본 13~17시 · 휴가 숨김 · 기등록 날짜·금액을 최초 조회부터 표시 · 저장 전 재확인' 20 110 1190
 $grid=New-Object WorkdayTripEntryGrid;$grid.Location=New-Object Drawing.Point(20,155);$grid.Size=New-Object Drawing.Size(1190,370);$grid.Anchor='Top,Bottom,Left,Right'
-$grid.EditMode='EditOnEnter';$grid.AllowUserToAddRows=$false;$grid.AllowUserToDeleteRows=$false;$grid.RowHeadersVisible=$false;$grid.AutoSizeColumnsMode='Fill';$grid.RowTemplate.Height=32
+$grid.EditMode='EditProgrammatically';$grid.AllowUserToAddRows=$false;$grid.AllowUserToDeleteRows=$false;$grid.RowHeadersVisible=$false;$grid.AutoSizeColumnsMode='Fill';$grid.RowTemplate.Height=32
 $check=New-Object Windows.Forms.DataGridViewCheckBoxColumn;$check.CellTemplate=New-Object WorkdayTripCheckCell;$check.Name='selected';$check.HeaderText='선택';$check.FillWeight=40;[void]$grid.Columns.Add($check)
 foreach($spec in @(@('date','날짜',100),@('weekday','요일',45),@('attendance','출퇴근',115),@('required','구분',145),@('registered','출장 등록',95))){$c=New-Object Windows.Forms.DataGridViewTextBoxColumn;$c.Name=$spec[0];$c.HeaderText=$spec[1];$c.FillWeight=$spec[2];$c.ReadOnly=$true;[void]$grid.Columns.Add($c)}
 foreach($spec in @(@('hours','인정시간',70),@('start_hour','출발 시',70),@('start_minute','분',60))){$c=New-Object Windows.Forms.DataGridViewComboBoxColumn;$c.Name=$spec[0];$c.HeaderText=$spec[1];$c.FillWeight=$spec[2];$c.FlatStyle='Flat';$items=if($spec[0] -eq 'hours'){@('2','4')}elseif($spec[0] -eq 'start_hour'){@(0..23|ForEach-Object{[string]$_})}else{@(0..59|ForEach-Object{[string]$_})};foreach($item in $items){[void]$c.Items.Add($item)};[void]$grid.Columns.Add($c)}
@@ -264,6 +276,8 @@ if($SelfTest){
  $fixture='[{"date":"2026-10-07","weekday":"수","checkin":"09:00","checkout":"18:00","mandatory":false,"event_day":true,"selected":true,"blocked":false,"hours":4,"start_hour":9,"start":"09:00","end":"18:00","amount":20000,"existing_amount":0,"location":"","purpose":"","status":"선택 가능"},{"date":"2026-10-13","weekday":"화","checkin":"08:35","checkout":"18:00","mandatory":false,"selected":false,"blocked":false,"hours":4,"start_hour":13,"start":"13:00","end":"17:00","amount":20000,"existing_amount":0,"location":"","purpose":"","status":"선택 가능"},{"date":"2026-10-14","weekday":"수","checkin":"08:30","checkout":"18:00","mandatory":false,"selected":false,"blocked":false,"hours":4,"start_hour":13,"start":"13:00","end":"17:00","amount":20000,"existing_amount":0,"location":"","purpose":"","status":"선택 가능"}]'|ConvertFrom-Json
  $script:reviewId='fixture';$script:allRows=@($fixture);$total.Value=20;if((Target-Amount) -ne 200000){throw '만원 입력 변환 실패'};$total.Value=3;Render-Rows $script:allRows
  if(-not $complete.Enabled){throw '목표 미달 일정의 다음 단계 진행 불가'}
+ $grid.CurrentCell=$grid.Rows[1].Cells['selected'];[void]$grid.BeginEdit($true)
+ if($grid.IsCurrentCellInEditMode){throw '체크박스 편집 버퍼 진입'}
  $grid.TestCellClick(1,$grid.Columns['selected'].Index)
  if(-not $grid.Rows[1].Cells['selected'].Value){throw '체크 셀 한 번 클릭 실패'}
  $grid.TestCellClick(1,$grid.Columns['selected'].Index)
@@ -323,6 +337,15 @@ if($SelfTest){
  if($grid.Rows[0].Cells['location'].Value -ne '저장된 장소' -or $grid.Rows[0].Cells['purpose'].Value -ne '저장된 목적'){throw '기존 장소·목적 불러오기 실패'}
 
  if($PreviewPath){Change-Stage 2;$script:loading=$true;$form.Controls.Remove($allocate);$form.Controls.Remove($complete);$grid.Columns.Remove('attendance');Write-UiPreview $form $PreviewPath}
+ if($InteractiveTest){
+  foreach($entry in $fixture){$entry.selected=$false}
+  $script:existing=0;$total.Value=20;$script:allRows=@($fixture);Change-Stage 1
+  $form.Text='출장 체크 클릭 시험 (사이트 접속 없음)'
+  $scan.Enabled=$false;$allocate.Visible=$false;$complete.Visible=$false;$loadExisting.Visible=$false
+  $testNext=Make-Button '입력 화면 클릭 시험' 270 600 330
+  $testNext.Add_Click({Update-Totals;Change-Stage 2;$submit.Enabled=$false})
+  [void]$form.ShowDialog()
+ }
  Write-Output 'TRIPS_UI_OK: budget limit, 2h fit, selected-only detail stage, optional events, under-budget advance, Tab/Enter entry navigation and manual details';$form.Dispose();$timer.Dispose();return
 }
 if(-not(Enter-WorkdayUi 'trips')){$form.Dispose();$timer.Dispose();return}

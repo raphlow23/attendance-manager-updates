@@ -1,5 +1,5 @@
 """Real Chrome workflows against a local trip/overtime form+POST server."""
-import sys,threading,tempfile
+import sys,threading,tempfile,re
 from pathlib import Path
 from datetime import date
 from html import escape
@@ -35,10 +35,16 @@ def trip_page(edit=None):
         for name,value in dict(kind='center',transport='public',sh=int(saved['start'][:2]),sm=int(saved['start'][3:]),eh=int(saved['end'][:2]),em=int(saved['end'][3:])).items():
             a=form.index('<select name="'+name+'">');b=form.index('</select>',a)
             form=form[:a]+form[a:b].replace('value="'+str(value)+'"','value="'+str(value)+'" selected')+form[b:]
-        form=form.replace('>확인</button>','>수정완료</button>')
-        for name,word,value in [('place','출장장소',saved['location']),('purpose','출장목적',saved['purpose'])]:
-            old=inp(name,value,'출장장소' if name=='place' else '출장목적을 구체적으로 입력하세요')
-            form=form.replace(old,'<div><label>'+word[:2]+' '+word[2:]+' :</label><div>'+inp(name,value)+'</div></div>')
+        form=form.replace('>확인</button>','>수정</button>')
+        # Actual edit screen: column headers over inputs, no placeholders.
+        def field(name):
+            pattern=r'<select name="'+name+r'">.*?</select>' if name in ('kind','transport','sh','sm','eh','em') else r'<input name="'+name+r'"[^>]*>'
+            return re.search(pattern,form).group().replace('placeholder="출장장소"','').replace('placeholder="출장목적을 구체적으로 입력하세요"','')
+        opening=form[:form.index('>')+1]
+        hidden=re.search(r'<input type="hidden"[^>]*>',form).group()
+        groups=[('구분',('kind',)),('출장일',('y','m','d')),('출장장소',('place',)),('출장목적',('purpose',)),('이동수단',('transport',)),('출발시간',('sh','sm')),('복귀시간',('eh','em'))]
+        values=[''.join(field(n) for n in names) for _,names in groups]
+        form=opening+hidden+'<table><thead><tr>'+''.join('<th>'+h+'</th>' for h,_ in groups)+'<th>수정</th></tr></thead><tbody><tr>'+''.join('<td>'+v+'</td>' for v in values)+'<td><button type="submit">수정</button></td></tr></tbody></table></form>'
     body=body.replace('</tr>','<td>EDIT</td></tr>')
     for index in range(len(trip_records)):body=body.replace('EDIT','<a href="/trip-edit?index='+str(index)+'">수정</a>',1)
     return NAV+'<h2>출장 등록하기</h2>'+((trip_page().split('<h2>출장 등록하기</h2>')[1].split('<h2>사용자님')[0]) if saved else '')+form+'<h2>사용자님의 10월 출장일지</h2><table><thead><tr>'+heads+'</tr></thead><tbody>'+body+'</tbody></table>'
@@ -182,5 +188,5 @@ try:
      assert len(rejected)==1 and rejected[0]['status'].startswith('확인 필요:') and statuses[rows[0]['date']]['status']=='uncertain',rejected
      assert len(ot_records)==3 and ot_records[0]['purpose']=='수정한 새 근무목적'
     finally:driver.quit()
-   print('JOURNAL_BROWSER_OK: attendance month 10→9→10 with native clicks disabled; underfilled schedule details allowed without POST; trip edit form without placeholders matched by labels; trip existing place/purpose loaded and updated with unchanged time / no duplicate; trip short-date history after POST verified / no duplicate; trip workflow + unchecked/blank-purpose exclusions and partial-budget warning + work-log direct form + user-supplied direct URL without menu links; overtime purpose absent from list / success page without history / observed-page refresh / two sequential POSTs / existing date purpose updated once / uncertain missing date added / detail purpose verified / no duplicate dates; no target-site requests')
+   print('JOURNAL_BROWSER_OK: attendance month 10→9→10 with native clicks disabled; underfilled schedule details allowed without POST; trip actual header-row edit form without placeholders matched by column; trip existing time/place/purpose updated / no duplicate; trip short-date history after POST verified / no duplicate; trip workflow + unchecked/blank-purpose exclusions and partial-budget warning + work-log direct form + user-supplied direct URL without menu links; overtime purpose absent from list / success page without history / observed-page refresh / two sequential POSTs / existing date purpose updated once / uncertain missing date added / detail purpose verified / no duplicate dates; no target-site requests')
 finally:server.shutdown();server.server_close();thread.join()

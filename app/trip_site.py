@@ -96,7 +96,7 @@ class TripPage:
     def text_fields(self,form,keyword):
         return self.driver.execute_script('''const root=arguments[0],word=arguments[1],clean=s=>(s||'').replace(/\\s|:/g,'');
         const fields=Array.from(root.querySelectorAll('input:not([type=hidden]):not([type=submit]):not([type=button]),textarea')).filter(e=>e.getClientRects().length);
-        return fields.filter(e=>{
+        const matches=fields.filter(e=>{
           if(clean(e.placeholder).includes(word)||clean(e.getAttribute('aria-label')).includes(word))return true;
           if(Array.from(e.labels||[]).some(l=>clean(l.textContent).includes(word)))return true;
           let p=e.parentElement;
@@ -105,7 +105,32 @@ class TripPage:
             if(clean(p.textContent).includes(word))return true;
           }
           return false;
-        });''',form,keyword)
+        });
+        // Edit forms use a header row above a single row of inputs, often
+        // without placeholders or label elements. Match the same table column.
+        for(const table of root.querySelectorAll('table')){
+          const header=Array.from(table.rows).find(r=>Array.from(r.cells).some(c=>c.tagName==='TH'));
+          if(!header)continue;
+          let column=0;
+          for(const head of header.cells){
+            const span=head.colSpan||1;
+            if(span===1&&clean(head.textContent)===word){
+              for(const row of table.rows){
+                if(row===header)continue;
+                let at=0;
+                for(const cell of row.cells){
+                  if(at===column&&(cell.colSpan||1)===1){
+                    const candidates=fields.filter(e=>cell.contains(e));
+                    if(candidates.length===1)matches.push(candidates[0]);
+                  }
+                  at+=cell.colSpan||1;
+                }
+              }
+            }
+            column+=span;
+          }
+        }
+        return Array.from(new Set(matches));''',form,keyword)
     def form(self):
         forms=[f for f in visible(self.driver.find_elements(By.TAG_NAME,'form')) if self.text_fields(f,'출장장소') and self.text_fields(f,'출장목적')]
         if len(forms)>1:
