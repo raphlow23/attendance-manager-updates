@@ -119,7 +119,6 @@ $summary=Text-Label '목표 금액을 입력하고 출퇴근 일정을 조회하
 $status=Text-Label '설정을 저장하거나 메뉴를 여는 것만으로 사이트에 접속하지 않습니다.' 20 650 1190;$status.Height=45;$status.Anchor='Bottom,Left,Right'
 $allocate=Make-Button '선택일 시간 배분' 20 600 230;$allocate.Anchor='Bottom,Left'
 $complete=Make-Button '선택 완료 → 기존 출장 확인' 270 600 330;$complete.Anchor='Bottom,Left'
-$loadExisting=Make-Button '기존 출장 불러오기·수정' 615 600 225;$loadExisting.Anchor='Bottom,Left'
 $back=Make-Button '일정 다시 선택' 20 600 230;$back.Anchor='Bottom,Left';$back.Visible=$false
 $submit=Make-Button '선택 날짜 등록·수정' 855 600 355;$submit.Anchor='Bottom,Right';$submit.Visible=$false
 $timer=New-Object Windows.Forms.Timer;$timer.Interval=400
@@ -156,7 +155,6 @@ function Update-Totals {
   $summary.ForeColor=if($left -eq 0 -and $valid -and -not $missing){[Drawing.Color]::DarkGreen}else{[Drawing.Color]::Firebrick}
   $ready=([bool]$script:reviewId -and ($left -ge 0 -or -not $hasNew) -and $count -gt 0 -and $valid -and -not $missing -and -not $script:worker)
   $complete.Enabled=($ready -and $script:stage -eq 1);$submit.Enabled=([bool]$script:reviewId -and ($left -ge 0 -or -not $hasNew) -and $count -gt 0 -and $valid -and $details -and -not $missing -and -not $script:worker -and $script:stage -eq 2)
-  $loadExisting.Enabled=([bool]$script:reviewId -and -not $script:worker)
   $allocate.Enabled=([bool]$script:reviewId -and $count -gt 0 -and -not $script:worker)
  }finally{$script:loading=$false}
 }
@@ -176,7 +174,7 @@ function Render-Rows($rows){
 function Change-Stage($stage){
  $script:stage=$stage;$details=($stage -eq 2);$grid.PurposeEntryMode=$details
  $grid.Columns['location'].Visible=$details;$grid.Columns['purpose'].Visible=$details;$grid.Columns['attendance'].Visible=-not $details
- $complete.Visible=-not $details;$allocate.Visible=-not $details;$back.Visible=$details;$submit.Visible=$details;$loadExisting.Visible=-not $details;$total.Enabled=-not $details;$month.Enabled=-not $details
+ $complete.Visible=-not $details;$allocate.Visible=-not $details;$back.Visible=$details;$submit.Visible=$details;$total.Enabled=-not $details;$month.Enabled=-not $details
  $heading.Text=if($details){'2. 장소·목적 입력 — 기존 출장은 수정하고, 신규 날짜는 추가 등록합니다.'}else{'1. 날짜·시간 선택 → 2. 선택한 날짜의 출장 장소·목적 입력 → 날짜별 등록'}
  $status.Text=if($details){'Tab·Enter: 장소 → 목적 → 다음 행 장소 / Shift: 역방향 · 체크 해제·목적 미입력은 등록 제외'}else{'금액이 차면 추가 체크를 막습니다. 선택을 해제하거나 시간을 줄이면 다시 선택할 수 있습니다.'}
  if($details){Render-Rows @($script:allRows|Where-Object{$_.selected})}else{Render-Rows $script:allRows}
@@ -202,7 +200,6 @@ function Start-TripJob($job){
 }
 $scan.Add_Click({try{$script:reviewId=$null;Start-TripJob @{operation='scan';month=(Selected-Month);total=(Target-Amount)}}catch{$status.Text=$_.Exception.Message}})
 $allocate.Add_Click({try{[void]$grid.EndEdit();Start-TripJob @{operation='allocate';review_id=$script:reviewId;total=(Target-Amount);rows=@(Entries)}}catch{$status.Text=$_.Exception.Message}})
-$loadExisting.Add_Click({try{[void]$grid.EndEdit();Start-TripJob @{operation='inspect';review_id=$script:reviewId;total=(Target-Amount);rows=@(Entries);edit_existing=$true}}catch{$status.Text=$_.Exception.Message}})
 $complete.Add_Click({try{[void]$grid.EndEdit();Update-Totals;if($complete.Enabled){Start-TripJob @{operation='inspect';review_id=$script:reviewId;total=(Target-Amount);rows=@(Entries)}}}catch{$status.Text=$_.Exception.Message}})
 $back.Add_Click({[void]$grid.EndEdit();Update-Totals;Change-Stage 1})
 $submit.Add_Click({try{
@@ -273,6 +270,7 @@ $form.Add_FormClosing({if($script:worker){$_.Cancel=$true;$status.Text='진행 �
 . (Join-Path $PSScriptRoot 'theme.ps1');Set-UiTheme $form;$submit.BackColor=$script:UiOrange
 Update-Totals
 if($SelfTest){
+ if(@($form.Controls|Where-Object{$_.Text -eq '기존 출장 불러오기·수정'}).Count){throw '중복 버튼이 남아 있음'}
  $fixture='[{"date":"2026-10-07","weekday":"수","checkin":"09:00","checkout":"18:00","mandatory":false,"event_day":true,"selected":true,"blocked":false,"hours":4,"start_hour":9,"start":"09:00","end":"18:00","amount":20000,"existing_amount":0,"location":"","purpose":"","status":"선택 가능"},{"date":"2026-10-13","weekday":"화","checkin":"08:35","checkout":"18:00","mandatory":false,"selected":false,"blocked":false,"hours":4,"start_hour":13,"start":"13:00","end":"17:00","amount":20000,"existing_amount":0,"location":"","purpose":"","status":"선택 가능"},{"date":"2026-10-14","weekday":"수","checkin":"08:30","checkout":"18:00","mandatory":false,"selected":false,"blocked":false,"hours":4,"start_hour":13,"start":"13:00","end":"17:00","amount":20000,"existing_amount":0,"location":"","purpose":"","status":"선택 가능"}]'|ConvertFrom-Json
  $script:reviewId='fixture';$script:allRows=@($fixture);$total.Value=20;if((Target-Amount) -ne 200000){throw '만원 입력 변환 실패'};$total.Value=3;Render-Rows $script:allRows
  if(-not $complete.Enabled){throw '목표 미달 일정의 다음 단계 진행 불가'}
@@ -341,7 +339,7 @@ if($SelfTest){
   foreach($entry in $fixture){$entry.selected=$false}
   $script:existing=0;$total.Value=20;$script:allRows=@($fixture);Change-Stage 1
   $form.Text='출장 체크 클릭 시험 (사이트 접속 없음)'
-  $scan.Enabled=$false;$allocate.Visible=$false;$complete.Visible=$false;$loadExisting.Visible=$false
+  $scan.Enabled=$false;$allocate.Visible=$false;$complete.Visible=$false
   $testNext=Make-Button '입력 화면 클릭 시험' 270 600 330
   $testNext.Add_Click({Update-Totals;Change-Stage 2;$submit.Enabled=$false})
   [void]$form.ShowDialog()
