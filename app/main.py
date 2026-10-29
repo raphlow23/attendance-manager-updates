@@ -281,6 +281,7 @@ def create_driver():
     from site_access import reserve_session
     reserve_session(sys.modules[__name__])
     options = webdriver.ChromeOptions()
+    options.set_capability("unhandledPromptBehavior", "ignore")
     options.add_argument('--headless=new')
     options.add_argument('--window-size=1440,1000')
     options.add_argument('--no-first-run')

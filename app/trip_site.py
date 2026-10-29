@@ -224,11 +224,14 @@ class TripPage:
         except UnexpectedAlertPresentException:pass
         self.phase='사이트 출장 삭제 결과 확인'
         def absent(_):
-            try:self.driver.switch_to.alert.accept()
-            except NoAlertPresentException:pass
-            check=getattr(self.driver,'_workday_check_response',None)
-            if callable(check):check()
-            try:return not any(r['date']==expected['date'] for r in self.existing(month))
+            try:
+                try:
+                    self.driver.switch_to.alert.accept()
+                    return False  # Allow confirmation-triggered navigation or a second alert to finish.
+                except NoAlertPresentException:pass
+                check=getattr(self.driver,'_workday_check_response',None)
+                if callable(check):check()
+                return not any(r['date']==expected['date'] for r in self.existing(month))
             except (StaleElementReferenceException,UnexpectedAlertPresentException):return False
         self.wait.until(absent)
     def submit(self,row,month,update=False):

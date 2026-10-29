@@ -111,11 +111,11 @@ $note=Text-Label '출장 구분: 센터·협회 선택 / 이동: 대중교통 ·
 [void](Text-Label '성명' 20 114 50)
 $exportName=New-Object Windows.Forms.TextBox;$exportName.Location=New-Object Drawing.Point(75,110);$exportName.Width=150;$form.Controls.Add($exportName)
 [void](Text-Label '직위' 245 114 50)
-$exportPosition=New-Object Windows.Forms.TextBox;$exportPosition.Location=New-Object Drawing.Point(300,110);$exportPosition.Width=120;$exportPosition.Text='대리';$form.Controls.Add($exportPosition)
+$exportPosition=New-Object Windows.Forms.TextBox;$exportPosition.Location=New-Object Drawing.Point(300,110);$exportPosition.Width=120;$exportPosition.Text='';$form.Controls.Add($exportPosition)
 $exportButton=Make-Button '센터 출장 엑셀 내보내기' 855 105 355
 [void](Text-Label '내장 양식 사용 · 센터만 내보내기' 445 114 370)
 $profilePath=Join-Path $PSScriptRoot 'dist/출장내보내기설정.json'
-try{if(Test-Path -LiteralPath $profilePath){$profile=Get-Content -LiteralPath $profilePath -Raw -Encoding UTF8|ConvertFrom-Json;$exportName.Text=[string]$profile.name;$exportPosition.Text=[string]$profile.position}}catch{}
+try{if(Test-Path -LiteralPath $profilePath){$profile=Get-Content -LiteralPath $profilePath -Raw -Encoding UTF8|ConvertFrom-Json;$exportName.Text=[string]$profile.name;$exportPosition.Text=if($profile.position_explicit -or [string]$profile.position -ne '대리'){[string]$profile.position}else{''}}}catch{}
 $grid=New-Object WorkdayTripEntryGrid;$grid.Location=New-Object Drawing.Point(20,190);$grid.Size=New-Object Drawing.Size(1190,335);$grid.Anchor='Top,Bottom,Left,Right'
 $grid.EditMode='EditProgrammatically';$grid.AllowUserToAddRows=$false;$grid.AllowUserToDeleteRows=$false;$grid.RowHeadersVisible=$false;$grid.AutoSizeColumnsMode='Fill';$grid.RowTemplate.Height=32
 $check=New-Object Windows.Forms.DataGridViewCheckBoxColumn;$check.CellTemplate=New-Object WorkdayTripCheckCell;$check.Name='selected';$check.HeaderText='선택';$check.FillWeight=40;[void]$grid.Columns.Add($check)
@@ -130,18 +130,19 @@ $status=Text-Label '설정을 저장하거나 메뉴를 여는 것만으로 사�
 $allocate=Make-Button '선택일 시간 배분' 20 600 230;$allocate.Anchor='Bottom,Left'
 $complete=Make-Button '선택 완료 → 기존 출장 확인' 270 600 330;$complete.Anchor='Bottom,Left'
 $back=Make-Button '일정 다시 선택' 20 600 230;$back.Anchor='Bottom,Left';$back.Visible=$false
-$submit=Make-Button '선택 날짜 등록·수정' 855 600 355;$submit.Anchor='Bottom,Right';$submit.Visible=$false
+$submit=Make-Button '선택 내역 정리 (등록·수정·삭제)' 855 600 355;$submit.Anchor='Bottom,Right';$submit.Visible=$false
 $timer=New-Object Windows.Forms.Timer;$timer.Interval=400
 function Selected-Month{[DateTime]::ParseExact([string]$month.SelectedItem,'yyyy년 MM월',[Globalization.CultureInfo]::InvariantCulture).ToString('yyyy-MM')}
 function Clock-Minutes($value){$text=([string]$value)-replace '\s','';if($text -match '^(\d{1,2}):(\d{1,2})$' -and [int]$Matches[1] -lt 24 -and [int]$Matches[2] -lt 60){return [int]$Matches[1]*60+[int]$Matches[2]};return -1}
 function Target-Amount{return [int]$total.Value*10000}
+function Effective-Existing{return $script:existing-[int](($script:allRows|Where-Object{$_.pending_delete}|Measure-Object -Property existing_amount -Sum).Sum)}
 function Row-Amount($row){if($row.Tag.is_existing){return 0};return [int]$row.Cells['hours'].Value*5000}
 function Update-Totals {
  if($script:loading){return};$script:loading=$true
  try{
-  $sum=0;$count=0;$valid=$true;$details=$true;$missing=$false;$skipped=0;$hasNew=$false
+  $deleteCount=@($script:allRows|Where-Object{$_.pending_delete}).Count;$effective=Effective-Existing;$sum=0;$count=0;$valid=$true;$details=$true;$missing=$false;$skipped=0;$hasNew=$false
   foreach($row in $grid.Rows){
-   $entry=$row.Tag;$hours=[int]$row.Cells['hours'].Value;$hour=[int]$row.Cells['start_hour'].Value
+   $entry=$row.Tag;if($entry.pending_delete){$row.Cells['status'].Value='삭제 예정 · 최종 정리 시 삭제';continue};$hours=[int]$row.Cells['hours'].Value;$hour=[int]$row.Cells['start_hour'].Value
    $minute=[int]$row.Cells['start_minute'].Value;$end=[string]$row.Cells['end'].Value
    $row.Cells['amount'].Value=$hours*5000
    if($entry.conflict){$missing=$true}
@@ -157,15 +158,16 @@ function Update-Totals {
    $entry.selected=[bool]$row.Cells['selected'].Value;$entry.hours=$hours;$entry.start_hour=$hour;$entry|Add-Member -NotePropertyName start_minute -NotePropertyValue $minute -Force;$entry.start=('{0:D2}:{1:D2}' -f $hour,$minute);$entry.end=$end;$entry.amount=$hours*5000
    $entry.location=[string]$row.Cells['location'].Value;$entry.purpose=[string]$row.Cells['purpose'].Value
   }
-  $left=(Target-Amount)-$script:existing-$sum
+  $left=(Target-Amount)-$effective-$sum
   $result=if($left -gt 0){"출장 추가 필요: $($left/5000)시간 / $($left.ToString('N0'))원 부족"}elseif($left -lt 0){"목표 초과: $((-$left).ToString('N0'))원 · 선택을 줄이세요."}else{'목표 금액·인정시간 일치'}
   if($script:stage -eq 2){$result+=" · 등록 $count 건 / 제외 $skipped 건"}
+  $result+=" · 삭제 예정 $deleteCount 건 (합계 제외)"
   if($missing){$result+=' · 기존 출장 확인 필요'}
   if(-not $valid){$result+=' · 출발·복귀를 출퇴근 구간 안으로 조정하세요.'}
-  $summary.Text="목표 $($total.Value.ToString('N0'))만원 / $((Target-Amount)/5000)시간 · 기존 $($script:existing.ToString('N0'))원 · 선택 $count 일 / $($sum.ToString('N0'))원`r`n$result"
+  $summary.Text="목표 $($total.Value.ToString('N0'))만원 / $((Target-Amount)/5000)시간 · 기존 $($effective.ToString('N0'))원 · 선택 $count 일 / $($sum.ToString('N0'))원`r`n$result"
   $summary.ForeColor=if($left -eq 0 -and $valid -and -not $missing){[Drawing.Color]::DarkGreen}else{[Drawing.Color]::Firebrick}
-  $ready=([bool]$script:reviewId -and ($left -ge 0 -or -not $hasNew) -and $count -gt 0 -and $valid -and -not $missing -and -not $script:worker)
-  $complete.Enabled=($ready -and $script:stage -eq 1);$submit.Enabled=([bool]$script:reviewId -and ($left -ge 0 -or -not $hasNew) -and $count -gt 0 -and $valid -and $details -and -not $missing -and -not $script:worker -and $script:stage -eq 2)
+  $ready=([bool]$script:reviewId -and ($left -ge 0 -or -not $hasNew) -and ($count+$deleteCount) -gt 0 -and $valid -and -not $missing -and -not $script:worker)
+  $complete.Enabled=($ready -and $script:stage -eq 1);$submit.Enabled=([bool]$script:reviewId -and ($left -ge 0 -or -not $hasNew) -and ($count+$deleteCount) -gt 0 -and $valid -and $details -and -not $missing -and -not $script:worker -and $script:stage -eq 2)
   $allocate.Enabled=([bool]$script:reviewId -and $count -gt 0 -and -not $script:worker)
  }finally{$script:loading=$false}
 }
@@ -174,10 +176,10 @@ function Render-Rows($rows){
  try{
   $grid.Rows.Clear()
   foreach($entry in $rows){
-   $index=$grid.Rows.Add([bool]$entry.selected,$entry.date,$entry.weekday,($entry.checkin+'~'+$entry.checkout),$(if($entry.event_day){'연장근무 제외(행사)'}else{''}),$(if($entry.category -in @('센터','협회')){$entry.category}else{'센터'}),$(if($entry.is_existing){'기등록'}elseif($entry.existing_checked){'미등록'}else{'확인 안 됨'}),$(if($entry.is_existing -and -not $entry.blocked){'삭제'}else{''}),[string][int]$entry.hours,[string][int]$entry.start_hour,[string]((Clock-Minutes $entry.start)%60),$entry.end,[int]$entry.amount,$entry.location,$entry.purpose,$entry.status)
+   $index=$grid.Rows.Add([bool]$entry.selected,$entry.date,$entry.weekday,($entry.checkin+'~'+$entry.checkout),$(if($entry.event_day){'연장근무 제외(행사)'}else{''}),$(if($entry.category -in @('센터','협회')){$entry.category}else{'센터'}),$(if($entry.is_existing){'기등록'}elseif($entry.existing_checked){'미등록'}else{'확인 안 됨'}),$(if($entry.pending_delete){'삭제 취소'}elseif($entry.is_existing -and -not $entry.blocked){'삭제'}else{''}),[string][int]$entry.hours,[string][int]$entry.start_hour,[string]((Clock-Minutes $entry.start)%60),$entry.end,[int]$entry.amount,$entry.location,$entry.purpose,$entry.status)
    $row=$grid.Rows[$index];$row.Tag=$entry
    if(-not $entry.is_existing -or $entry.blocked){$empty=New-Object Windows.Forms.DataGridViewTextBoxCell;$empty.Value='';$row.Cells['delete']=$empty;$row.Cells['delete'].ReadOnly=$true}
-   foreach($name in @('selected','category','hours','start_hour','start_minute','end','location','purpose')){$row.Cells[$name].ReadOnly=[bool]$entry.blocked}
+   foreach($name in @('selected','category','hours','start_hour','start_minute','end','location','purpose')){$row.Cells[$name].ReadOnly=([bool]$entry.blocked -or [bool]$entry.pending_delete)}
    if($entry.is_existing){$row.Cells['hours'].ReadOnly=$true}
    if($script:stage -eq 2){$row.Cells['hours'].ReadOnly=$true}
   }
@@ -189,7 +191,7 @@ function Change-Stage($stage){
  $complete.Visible=-not $details;$allocate.Visible=-not $details;$back.Visible=$details;$submit.Visible=$details;$total.Enabled=-not $details;$month.Enabled=-not $details
  $heading.Text=if($details){'2. 장소·목적 입력 — 기존 출장은 수정하고, 신규 날짜는 추가 등록합니다.'}else{'1. 날짜·시간 선택 → 2. 선택한 날짜의 출장 장소·목적 입력 → 날짜별 등록'}
  $status.Text=if($details){'Tab·Enter: 장소 → 목적 → 다음 행 장소 / Shift: 역방향 · 체크 해제·목적 미입력은 등록 제외'}else{'금액이 차면 추가 체크를 막습니다. 선택을 해제하거나 시간을 줄이면 다시 선택할 수 있습니다.'}
- if($details){Render-Rows @($script:allRows|Where-Object{$_.selected})}else{Render-Rows $script:allRows}
+ if($details){Render-Rows @($script:allRows|Where-Object{$_.selected -or $_.pending_delete})}else{Render-Rows $script:allRows}
 }
 function Open-TripDetails($Result,[scriptblock]$Confirm=$null){
  $proceed=$true
@@ -200,11 +202,11 @@ function Open-TripDetails($Result,[scriptblock]$Confirm=$null){
  if($proceed){Change-Stage 2}else{Change-Stage 1}
  return $proceed
 }
-function Entries{@($grid.Rows|ForEach-Object{@{date=[string]$_.Cells['date'].Value;selected=[bool]$_.Cells['selected'].Value;category=[string]$_.Cells['category'].Value;hours=[int]$_.Cells['hours'].Value;start_hour=[int]$_.Cells['start_hour'].Value;start_minute=[int]$_.Cells['start_minute'].Value;end=[string]$_.Cells['end'].Value;location=[string]$_.Cells['location'].Value;purpose=[string]$_.Cells['purpose'].Value}})}
+function Entries{@($grid.Rows|ForEach-Object{@{date=[string]$_.Cells['date'].Value;selected=[bool]$_.Cells['selected'].Value;pending_delete=[bool]$_.Tag.pending_delete;category=[string]$_.Cells['category'].Value;hours=[int]$_.Cells['hours'].Value;start_hour=[int]$_.Cells['start_hour'].Value;start_minute=[int]$_.Cells['start_minute'].Value;end=[string]$_.Cells['end'].Value;location=[string]$_.Cells['location'].Value;purpose=[string]$_.Cells['purpose'].Value}})}
 function Start-TripJob($job){
  $python=Join-Path $PSScriptRoot 'runtime/python.exe';if(-not(Test-Path -LiteralPath $python)){throw '설치된 프로그램에서 실행하세요.'}
  $root=Join-Path $PSScriptRoot 'dist';New-Item -ItemType Directory -Path $root -Force|Out-Null
- $script:jobPath=Join-Path $root ('trip-job-'+[Guid]::NewGuid().ToString('N')+'.json');$script:operation=$job.operation;$script:closeAfterSubmit=$false;$script:expectedSubmitCount=@($job.rows|Where-Object{$_.selected -and -not [string]::IsNullOrWhiteSpace($_.purpose)}).Count
+ $script:jobPath=Join-Path $root ('trip-job-'+[Guid]::NewGuid().ToString('N')+'.json');$script:operation=$job.operation;$script:closeAfterSubmit=$false;$script:expectedSubmitCount=@($job.rows|Where-Object{($_.selected -and -not [string]::IsNullOrWhiteSpace($_.purpose)) -or $_.pending_delete}).Count
  [IO.File]::WriteAllText($script:jobPath,($job|ConvertTo-Json -Depth 10),(New-Object Text.UTF8Encoding($false)))
  $script:worker=Start-WorkdayHiddenProcess $python "`"$(Join-Path $PSScriptRoot 'main.py')`" --trip-job `"$script:jobPath`"" $PSScriptRoot
  foreach($c in $form.Controls){if($c -ne $status){$c.Enabled=$false}}
@@ -219,18 +221,17 @@ $exportButton.Add_Click({
   try{if($dialog.ShowDialog($form) -eq 'OK'){Start-TripJob @{operation='export';month=$selectedMonth;output_path=$dialog.FileName;name=$exportName.Text.Trim();position=$exportPosition.Text.Trim()}}}finally{$dialog.Dispose()}
  }catch{[void][Windows.Forms.MessageBox]::Show($form,$_.Exception.Message,'엑셀 내보내기','OK','Information')}
 })
-function New-TripDeleteRequest($Row){
+function Toggle-TripDeletion($Row){
  if($script:stage -ne 1 -or -not $script:reviewId -or -not $Row.Tag.is_existing -or $Row.Tag.blocked -or -not $Row.Tag.site_record){throw '조회 목록의 기등록 날짜에서 삭제할 수 있습니다. 다시 조회하세요.'}
- $record=$Row.Tag.site_record
- $message="다음 기등록 출장을 사이트에서 삭제할까요?`r`n`r`n날짜: $($record.date)`r`n구분: $($record.category)`r`n시간: $($record.start)~$($record.end)`r`n장소: $($record.location)`r`n목적: $($record.purpose)`r`n`r`n삭제 확인 후 이 날짜는 미등록으로 돌아갑니다. 재등록하려면 다시 선택하세요."
- return [PSCustomObject]@{message=$message;job=@{operation='delete';review_id=$script:reviewId;total=(Target-Amount);dates=@([string]$record.date);confirmed=$true;rows=@(Entries)}}
+ $entry=$Row.Tag;$pending=-not [bool]$entry.pending_delete
+ $entry|Add-Member -NotePropertyName pending_delete -NotePropertyValue $pending -Force
+ $entry.selected=$false;$entry.status=if($pending){'삭제 예정 · 최종 정리 시 삭제'}else{'기존 등록 · 장소·목적 수정 가능'}
+ Render-Rows $script:allRows
+ $status.Text='삭제 버튼은 예정 표시만 합니다. 삭제 취소로 되돌릴 수 있으며, 마지막 선택 내역 정리에서 한꺼번에 반영합니다.'
 }
 $grid.Add_CellContentClick({param($sender,$eventArgs)
  if($eventArgs.RowIndex -lt 0 -or $eventArgs.ColumnIndex -lt 0 -or $grid.Columns[$eventArgs.ColumnIndex].Name -ne 'delete' -or $script:worker){return}
- try{
-  [void]$grid.EndEdit();$request=New-TripDeleteRequest $grid.Rows[$eventArgs.RowIndex]
-  if([Windows.Forms.MessageBox]::Show($form,$request.message,'기등록 출장 삭제 확인','YesNo','Warning') -eq 'Yes'){Start-TripJob $request.job}
- }catch{[void][Windows.Forms.MessageBox]::Show($form,$_.Exception.Message,'출장 삭제 확인','OK','Information')}
+ try{[void]$grid.EndEdit();Update-Totals;Toggle-TripDeletion $grid.Rows[$eventArgs.RowIndex]}catch{$status.Text=$_.Exception.Message}
 })
 $scan.Add_Click({try{$script:reviewId=$null;Start-TripJob @{operation='scan';month=(Selected-Month);total=(Target-Amount)}}catch{$status.Text=$_.Exception.Message}})
 $allocate.Add_Click({try{[void]$grid.EndEdit();Start-TripJob @{operation='allocate';review_id=$script:reviewId;total=(Target-Amount);rows=@(Entries)}}catch{$status.Text=$_.Exception.Message}})
@@ -240,13 +241,14 @@ $submit.Add_Click({try{
  [void]$grid.EndEdit();Update-Totals
  if($submit.Enabled){
   $entries=@(Entries)
-  $included=@($entries|Where-Object{$_.selected -and -not [string]::IsNullOrWhiteSpace($_.purpose)})
-  $excluded=@($entries|Where-Object{-not $_.selected -or [string]::IsNullOrWhiteSpace($_.purpose)})
+  $deletions=@($entries|Where-Object{$_.pending_delete})
+  $included=@($entries|Where-Object{$_.selected -and -not $_.pending_delete -and -not [string]::IsNullOrWhiteSpace($_.purpose)})
+  $excluded=@($entries|Where-Object{-not $_.pending_delete -and (-not $_.selected -or [string]::IsNullOrWhiteSpace($_.purpose))})
   $excludedLines=@($excluded|ForEach-Object{('{0}: {1}' -f $_.date,$(if(-not $_.selected){'체크 해제'}else{'목적 미입력'}))})
-  $text="등록·수정 대상 $($included.Count)건: $((@($included|ForEach-Object{$_.date})) -join ', ')`r`n제외 $($excluded.Count)건"
+  $text="삭제 대상 $($deletions.Count)건: $((@($deletions|ForEach-Object{$_.date})) -join ', ')`r`n등록·수정 대상 $($included.Count)건: $((@($included|ForEach-Object{$_.date})) -join ', ')`r`n제외 $($excluded.Count)건"
   if($excludedLines.Count){$text+="`r`n"+($excludedLines -join "`r`n")}
-  $text+="`r`n`r`n$($summary.Text)`r`n`r`n제외한 날짜는 처리하지 않습니다. 기존 출장은 출발·복귀와 장소·목적을 수정하고, 신규 날짜는 추가합니다. 진행할까요?"
-  if([Windows.Forms.MessageBox]::Show($form,$text,'출장 등록 확인','OKCancel','Question') -ne 'OK'){return}
+  $text+="`r`n`r`n$($summary.Text)`r`n`r`n삭제 예정 건은 사이트의 삭제 버튼과 확인 메시지의 확인을 눌러 삭제합니다. 제외한 날짜는 처리하지 않습니다. 기존 출장은 출발·복귀와 장소·목적을 수정하고, 신규 날짜는 추가합니다. 진행할까요?"
+  if([Windows.Forms.MessageBox]::Show($form,$text,'출장 최종 정리 확인','OKCancel','Question') -ne 'OK'){return}
   Start-TripJob @{operation='submit';review_id=$script:reviewId;total=(Target-Amount);rows=$entries}
  }
 }catch{$status.Text=$_.Exception.Message}})
@@ -260,13 +262,13 @@ $grid.Add_CellValueChanged({param($sender,$eventArgs)
  try{
   if($script:stage -eq 1 -and -not $row.Tag.is_existing -and $name -eq 'selected' -and $row.Cells['selected'].Value -and -not $row.Tag.selected){
    $others=0;foreach($other in $grid.Rows){if($other -ne $row -and $other.Cells['selected'].Value){$others+=Row-Amount $other}}
-   $left=(Target-Amount)-$script:existing-$others
+   $left=(Target-Amount)-(Effective-Existing)-$others
    if($left -lt 10000){$row.Cells['selected'].Value=$false;$status.Text='목표 금액을 이미 채웠습니다. 다른 날짜를 해제하거나 시간을 줄이면 다시 선택할 수 있습니다.'}
    elseif((Row-Amount $row) -gt $left){$row.Cells['hours'].Value='2';$name='hours'}
   }
   if($script:stage -eq 1 -and $name -eq 'hours' -and $row.Cells['selected'].Value){
    $sum=0;foreach($other in $grid.Rows){if($other.Cells['selected'].Value){$sum+=Row-Amount $other}}
-   if($script:existing+$sum -gt (Target-Amount)){$row.Cells['hours'].Value=[string]$row.Tag.hours;$status.Text='남은 금액보다 큰 시간은 선택할 수 없습니다.'}
+   if((Effective-Existing)+$sum -gt (Target-Amount)){$row.Cells['hours'].Value=[string]$row.Tag.hours;$status.Text='남은 금액보다 큰 시간은 선택할 수 없습니다.'}
   }
   if($name -in @('hours','start_hour','start_minute')){
    $hour=[int]$row.Cells['start_hour'].Value;$minute=[int]$row.Cells['start_minute'].Value;$hours=[int]$row.Cells['hours'].Value
@@ -280,9 +282,9 @@ $timer.Add_Tick({
  if(-not $script:worker -or -not $script:worker.HasExited){return};$timer.Stop()
  try{
   $result=Get-Content -LiteralPath ($script:jobPath+'.result.json') -Raw -Encoding UTF8|ConvertFrom-Json
-  if($result.summary){$script:existing=[int]$result.summary.existing_amount}
+  if($result.summary){$script:existing=if($null -ne $result.summary.raw_existing_amount){[int]$result.summary.raw_existing_amount}else{[int]$result.summary.existing_amount}}
   if($script:operation -eq 'export'){
-   if($result.ok){[IO.File]::WriteAllText($profilePath,(@{name=$exportName.Text.Trim();position=$exportPosition.Text.Trim()}|ConvertTo-Json),(New-Object Text.UTF8Encoding($false)))}
+   if($result.ok){[IO.File]::WriteAllText($profilePath,(@{name=$exportName.Text.Trim();position=$exportPosition.Text.Trim();position_explicit=$true}|ConvertTo-Json),(New-Object Text.UTF8Encoding($false)))}
   }elseif($script:operation -eq 'delete'){
    $script:reviewId=$result.review_id
    if($result.rows){$script:allRows=@($result.rows);Change-Stage 1}
@@ -377,8 +379,12 @@ if($SelfTest){
  $saved|Add-Member -NotePropertyName site_record -NotePropertyValue $site -Force
  $script:allRows=@($saved);Change-Stage 1
  if($grid.Rows[0].Cells['delete'].Value -ne '삭제' -or -not $grid.Columns['delete'].Visible){throw '조회 목록의 기등록 삭제 버튼 없음'}
- $deleteRequest=New-TripDeleteRequest $grid.Rows[0]
- if($deleteRequest.job.dates[0] -ne '2026-10-13' -or $deleteRequest.job.operation -ne 'delete'){throw '행별 삭제 대상 전달 오류'}
+ $script:existing=20000;Toggle-TripDeletion $grid.Rows[0]
+ if(-not $script:allRows[0].pending_delete -or (Effective-Existing) -ne 0 -or $script:worker){throw '삭제 예정 표시 또는 합계 제외 실패'}
+ if($grid.Rows[0].Cells['delete'].Value -ne '삭제 취소'){throw '삭제 취소 버튼 없음'}
+ Toggle-TripDeletion $grid.Rows[0]
+ if($script:allRows[0].pending_delete -or (Effective-Existing) -ne 20000){throw '삭제 예정 취소 실패'}
+ $saved.selected=$true
  Change-Stage 2
  if($grid.Columns['delete'].Visible){throw '입력 단계에 삭제 버튼 노출'}
  if($grid.Rows[0].Cells['category'].Value -ne '센터'){throw '출장 구분 기본값 오류'}

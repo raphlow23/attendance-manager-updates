@@ -186,7 +186,7 @@ function Test-WorkdaySubmissionComplete($Result,[int]$ExpectedCount) {
     $rows=@($Result.rows)
     if($rows.Count -ne $ExpectedCount){return $false}
     foreach($row in $rows){
-        if($row.status -notin @('신청 확인 완료','수정 확인 완료','등록 확인 완료','기존 내용 동일 · 유지')){return $false}
+        if($row.status -notin @('신청 확인 완료','수정 확인 완료','등록 확인 완료','기존 내용 동일 · 유지','삭제 확인 완료')){return $false}
     }
     return $true
 }

@@ -49,7 +49,7 @@ def trip_page(edit=None):
         values=[''.join(field(n) for n in names) for _,names in groups]
         form=opening+hidden+'<table><thead><tr>'+''.join('<th>'+h+'</th>' for h,_ in groups)+'<th>수정</th></tr></thead><tbody><tr>'+''.join('<td>'+v+'</td>' for v in values)+'<td><button type="submit">수정</button></td></tr></tbody></table></form>'
     body=body.replace('</tr>','<td>EDIT</td></tr>')
-    for index in range(len(trip_records)):body=body.replace('EDIT','<a href="/trip-edit?index='+str(index)+'">수정</a> <a href="/trip-delete?index='+str(index)+'" onclick="return confirm(\'삭제할까요?\')">삭제</a>',1)
+    for index in range(len(trip_records)):body=body.replace('EDIT','<a href="/trip-edit?index='+str(index)+'">수정</a> <a href="/trip-delete?index='+str(index)+'" onclick="if(!confirm(\'삭제할까요?\'))return false;alert(\'삭제를 진행합니다\');return true">삭제</a>',1)
     return NAV+'<h2>출장 등록하기</h2>'+((trip_page().split('<h2>출장 등록하기</h2>')[1].split('<h2>사용자님')[0]) if saved else '')+form+'<h2>사용자님의 10월 출장일지</h2><table><thead><tr>'+heads+'</tr></thead><tbody>'+body+'</tbody></table>'
 def overtime_page(edit=None):
     r=ot_records[edit] if edit is not None else None
@@ -110,6 +110,7 @@ class Server(ThreadingHTTPServer):
 server=Server(('127.0.0.1',0),Handler);thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start();base=f'http://127.0.0.1:{server.server_port}'
 def connect(*args):
     options=webdriver.ChromeOptions()
+    options.set_capability("unhandledPromptBehavior","ignore")
     for arg in ('--headless=new','--window-size=1440,1000','--disable-background-networking','--no-first-run'):options.add_argument(arg)
     driver=webdriver.Chrome(options=options,service=Service(str(ROOT/'app/driver/chromedriver.exe'),popen_kw={'creation_flags':app.subprocess.CREATE_NO_WINDOW}))
     driver.get(base+'/attendance');return driver,Mock()
@@ -166,19 +167,28 @@ try:
     from openpyxl import load_workbook
     report=load_workbook(export_path,data_only=True).active
     assert report['B35'].value==30000 and report['D9'].value=='시험 사용자'
-    scan=trips.run_job(app,dict(operation='scan',month='2026-10',total=40000))
-    removed=trips.run_job(app,dict(operation='delete',review_id=scan['review_id'],dates=['2026-10-14'],confirmed=True,total=40000,rows=scan['rows']))
+    batch_scan=trips.run_job(app,dict(operation='scan',month='2026-10',total=50000))
+    batch_rows=[dict(r,pending_delete=r['date']=='2026-10-13',selected=r['date']=='2026-10-15',location='일괄 등록 장소' if r['date']=='2026-10-15' else r['location'],purpose='일괄 등록 목적' if r['date']=='2026-10-15' else r['purpose']) for r in batch_scan['rows']]
+    before_posts=list(posts)
+    batch_review=trips.run_job(app,dict(operation='inspect',review_id=batch_scan['review_id'],total=50000,rows=batch_rows))
+    assert batch_review['ready'] and posts==before_posts and any(r['date']=='2026-10-13' for r in trip_records),batch_review
+    batch_done=trips.run_job(app,dict(operation='submit',review_id=batch_review['review_id'],total=50000,rows=batch_review['rows']))
+    assert batch_done['ok'],batch_done
+    assert not any(r['date']=='2026-10-13' for r in trip_records) and any(r['date']=='2026-10-15' for r in trip_records)
+    assert [p for p in posts[len(before_posts):] if p[0] in ('trip-delete','trip')]==[('trip-delete','2026-10-13'),('trip','2026-10-15')]
+    scan=trips.run_job(app,dict(operation='scan',month='2026-10',total=50000))
+    removed=trips.run_job(app,dict(operation='delete',review_id=scan['review_id'],dates=['2026-10-14'],confirmed=True,total=50000,rows=scan['rows']))
     assert removed['ok'] and len(trip_records)==2,removed
     available=next(r for r in removed['rows'] if r['date']=='2026-10-14')
     assert not available['is_existing'] and not available['selected'] and not available['blocked'] and available['existing_amount']==0,available
     again=[dict(r,selected=r['date']=='2026-10-14',purpose='삭제 후 재등록 목적' if r['date']=='2026-10-14' else r['purpose']) for r in removed['rows']]
-    inspected=trips.run_job(app,dict(operation='inspect',review_id=removed['review_id'],total=40000,rows=again))
+    inspected=trips.run_job(app,dict(operation='inspect',review_id=removed['review_id'],total=50000,rows=again))
     assert inspected['ready'],inspected
-    registered=trips.run_job(app,dict(operation='submit',review_id=inspected['review_id'],total=40000,rows=inspected['rows']))
+    registered=trips.run_job(app,dict(operation='submit',review_id=inspected['review_id'],total=50000,rows=inspected['rows']))
     assert registered['ok'] and len(trip_records)==3,registered
     assert sum(r['date']=='2026-10-14' for r in trip_records)==1
     assert next(r for r in trip_records if r['date']=='2026-10-14')['purpose']=='삭제 후 재등록 목적'
-    assert [r for r in posts if r[0]=='trip-delete']==[('trip-delete','2026-10-14')]
+    assert [r for r in posts if r[0]=='trip-delete']==[('trip-delete','2026-10-13'),('trip-delete','2026-10-14')]
     driver,_=connect()
     try:
      from attendance_recovery import AttendancePage
@@ -214,5 +224,5 @@ try:
      assert len(rejected)==1 and rejected[0]['status'].startswith('확인 필요:') and statuses[rows[0]['date']]['status']=='uncertain',rejected
      assert len(ot_records)==3 and ot_records[0]['purpose']=='수정한 새 근무목적'
     finally:driver.quit()
-   print('JOURNAL_BROWSER_OK: attendance month 10→9→10 with native clicks disabled; underfilled schedule details allowed without POST; trip actual header-row edit form without placeholders matched by column; trip existing category/time/place/purpose updated / no duplicate; center-only XLSX export from live history excludes association; trip deletion through observed row button and site confirm -> verified absence -> unregistered row -> one new registration; trip short-date history after POST verified / no duplicate; trip workflow + unchecked/blank-purpose exclusions and partial-budget warning + work-log direct form + user-supplied direct URL without menu links; overtime purpose absent from list / success page without history / observed-page refresh / two sequential POSTs / existing date purpose updated once / uncertain missing date added / detail purpose verified / no duplicate dates; no target-site requests')
+   print('JOURNAL_BROWSER_OK: attendance month 10→9→10 with native clicks disabled; underfilled schedule details allowed without POST; trip actual header-row edit form without placeholders matched by column; trip existing category/time/place/purpose updated / no duplicate; center-only XLSX export from live history excludes association; deferred deletion plus registration in one session; two successive site dialogs accepted; trip deletion through observed row button and site confirm -> verified absence -> unregistered row -> one new registration; trip short-date history after POST verified / no duplicate; trip workflow + unchecked/blank-purpose exclusions and partial-budget warning + work-log direct form + user-supplied direct URL without menu links; overtime purpose absent from list / success page without history / observed-page refresh / two sequential POSTs / existing date purpose updated once / uncertain missing date added / detail purpose verified / no duplicate dates; no target-site requests')
 finally:server.shutdown();server.server_close();thread.join()

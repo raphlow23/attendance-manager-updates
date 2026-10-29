@@ -108,7 +108,7 @@ def prepare_local_parts(parts):
         parts['docProps/core.xml']=xml(core)
     return parts
 
-def export_records(records,month,output_path,name,position='대리',template=TEMPLATE):
+def export_records(records,month,output_path,name,position='',template=TEMPLATE):
     first=month_date(month);last=first.replace(day=calendar.monthrange(first.year,first.month)[1])
     name=str(name or '').strip();position=str(position or '').strip()
     if not name:raise ValueError('엑셀 문서에 표시할 성명을 입력하세요.')
@@ -220,5 +220,5 @@ def export_site_records(app,job):
         try:
             page=TripPage(driver);page.open();records=page.existing(month)
         finally:driver.quit()
-    result=export_records(records,month,job['output_path'],job['name'],job.get('position','대리'),template=template)
+    result=export_records(records,month,job['output_path'],job['name'],job.get('position',''),template=template)
     return dict(ok=True,**result,message=f"센터 출장 {result['center_count']}건 내보내기 완료 · 협회 등 {result['excluded_count']}건 제외 · {result['total_amount']:,}원\n{result['export_path']}")
