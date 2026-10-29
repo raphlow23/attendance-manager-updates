@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 import threading
+import tempfile
 from contextlib import contextmanager
 from datetime import date, datetime, time as dt_time, timedelta
 
@@ -114,10 +115,26 @@ def log_event(message):
 
 
 def save_json(path, data):
-    temp_path = path + ".tmp"
-    with open(temp_path, "w", encoding="utf-8") as file:
-        json.dump(data, file, ensure_ascii=False, indent=2)
-    os.replace(temp_path, path)
+    path = os.fspath(path)
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=os.path.dirname(os.path.abspath(path)),
+                                         prefix=os.path.basename(path)+".", suffix=".tmp", delete=False) as file:
+            temp_path = file.name
+            json.dump(data, file, ensure_ascii=False, indent=2)
+        # Windows readers/antivirus may briefly deny replacement. Keep the old
+        # complete JSON until replacement succeeds; never truncate it in place.
+        for delay in (0.02, 0.05, 0.1, 0.2, None):
+            try:
+                os.replace(temp_path, path)
+                return
+            except PermissionError:
+                if delay is None:raise
+                time.sleep(delay)
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            try:os.remove(temp_path)
+            except OSError:pass
 
 
 def load_json(path, default):
