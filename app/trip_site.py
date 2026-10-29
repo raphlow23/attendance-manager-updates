@@ -1,7 +1,7 @@
 """Semantic adapter for the user-supplied business-trip registration screen."""
 import re
 from datetime import date
-from urllib.parse import urlsplit,urlunsplit
+from urllib.parse import urlsplit,urlunsplit,urljoin
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import Select,WebDriverWait
 from selenium.common.exceptions import NoAlertPresentException,UnexpectedAlertPresentException,StaleElementReferenceException,TimeoutException
@@ -12,6 +12,21 @@ from business_trips import CATEGORY,TRANSPORT,trip_category
 TRIP_ENTRY_URL='http://sappd.kr/sappd_g6.php'
 
 def norm(text):return re.sub(r'\s+','',text)
+
+
+def confirmed_delete_link(source,href,onclick):
+    """Resolve only the reviewed row's plain confirm-then-link action.
+
+    The application has already shown and received the final delete confirmation.
+    Do not evaluate arbitrary handlers or infer a delete URL from an ID.
+    """
+    match=re.fullmatch(r'''\s*return\s+confirm\(\s*(['"])([^'"\\\r\n]*)\1\s*\)\s*;?\s*''',onclick or '')
+    if not match or norm(match[2])!='해당출장일지를삭제하시겠습니까?':return None
+    if not href or href.strip().startswith('#'):return None
+    url=urljoin(source,href);origin=urlsplit(source);target=urlsplit(url)
+    if target.scheme not in ('http','https') or (origin.scheme,origin.netloc)!=(target.scheme,target.netloc):
+        raise RuntimeError('다른 사이트의 삭제 링크는 실행하지 않습니다.')
+    return url
 
 
 def history_date(text,month):
@@ -219,6 +234,8 @@ class TripPage:
         guard=getattr(self.driver,'_workday_before_write',None)
         if callable(guard):guard()
         list_url=self.driver.current_url
+        approved_link=confirmed_delete_link(list_url,href,button.get_attribute('onclick'))
+        method='프로그램 최종 확인 후 해당 행의 삭제 링크 실행' if approved_link else '삭제 버튼 및 사이트 확인창 처리'
         confirmations=0
         def confirm_dialog():
             nonlocal confirmations
@@ -239,10 +256,12 @@ class TripPage:
             self.driver.execute_script('arguments[0].click()',buttons[0])
             confirmations+=1
             return True
-        self.phase='해당 날짜 삭제 버튼 실행'
-        self.driver.execute_script('arguments[0].scrollIntoView({block:"center"})',button)
+        self.phase=method
+        if not approved_link:self.driver.execute_script('arguments[0].scrollIntoView({block:"center"})',button)
         self.driver._workday_write_submitted=True
-        try:button.click()
+        try:
+            if approved_link:self.driver.get(approved_link)
+            else:button.click()
         except UnexpectedAlertPresentException:pass
         self.phase='사이트 출장 삭제 결과 확인'
         def absent(_):
@@ -269,8 +288,8 @@ class TripPage:
                 records=self.existing(month)
                 if not any(r['date']==expected['date'] for r in records):return
             except (UnexpectedAlertPresentException,TimeoutException) as fresh_error:
-                raise RuntimeError(f'삭제 확인창 {confirmations}개 처리 후 목록 재조회를 확인하지 못했습니다. 삭제를 반복하지 않았습니다. 사이트에서 해당 날짜를 확인하세요.') from fresh_error
-            raise RuntimeError(f'삭제 확인창 {confirmations}개 처리 후 목록을 다시 조회했지만 {expected["date"]} 기록이 남아 있습니다. 삭제는 완료되지 않았습니다. 확인창 종류 또는 사이트 메시지 확인이 필요합니다.') from error
+                raise RuntimeError(f'{method} 후 목록 재조회를 확인하지 못했습니다. 삭제를 반복하지 않았습니다. 사이트에서 해당 날짜를 확인하세요.') from fresh_error
+            raise RuntimeError(f'{method} 후 목록을 다시 조회했지만 {expected["date"]} 기록이 남아 있습니다. 삭제는 완료되지 않았습니다. 사이트 메시지 확인이 필요합니다.') from error
     def submit(self,row,month,update=False):
         self.driver._workday_write_submitted=False
         self.phase='기존 출장 행 확인' if update else '신규 출장 입력 폼 확인'
