@@ -1,5 +1,5 @@
 ﻿[CmdletBinding()]
-param([switch]$SelfTest, [long]$OwnerHandle = 0)
+param([switch]$SelfTest, [long]$OwnerHandle = 0, [string]$PreviewPath)
 
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Windows.Forms
@@ -21,7 +21,7 @@ if (Test-Path -LiteralPath $SettingsFile) {
 
 $form = New-Object Windows.Forms.Form
 $form.Text = "출근정리 — 근태 자동관리"
-$form.Size = New-Object Drawing.Size(470, 850)
+$form.Size = New-Object Drawing.Size(520, 900)
 $form.AutoScroll = $true
 $form.StartPosition = "CenterScreen"
 $form.FormBorderStyle = "FixedDialog"
@@ -41,7 +41,7 @@ $status.Size = New-Object Drawing.Size(410, 64)
 $status.Font = New-Object Drawing.Font('Malgun Gothic', 9)
 $status.Location = New-Object Drawing.Point(22, 57)
 $status.TextAlign = "MiddleCenter"
-$status.BorderStyle = "FixedSingle"
+$status.BorderStyle = "None"
 $form.Controls.Add($status)
 
 $idLabel = New-Object Windows.Forms.Label
@@ -125,7 +125,7 @@ foreach ($spec in @(@('checkin_start','출근', '08:30',20,30), @('checkin_end',
     $label.Text = $spec[1]; $label.Location = New-Object Drawing.Point($spec[3], ($spec[4]+3)); $label.Size = New-Object Drawing.Size(45,25)
     $timeGroup.Controls.Add($label)
     $picker = New-Object Windows.Forms.DateTimePicker
-    $picker.Format = 'Custom'; $picker.CustomFormat = 'HH:mm'; $picker.ShowUpDown = $true
+    $picker.Format = 'Custom'; $picker.CustomFormat = '   HH:mm'; $picker.ShowUpDown = $true
     $picker.Location = New-Object Drawing.Point(($spec[3]+48), $spec[4]); $picker.Size = New-Object Drawing.Size(102,28)
     $value = $spec[2]
     if ($script:CurrentSettings -and $script:CurrentSettings.($spec[0])) { $value = $script:CurrentSettings.($spec[0]) }
@@ -151,7 +151,8 @@ function Start-ControlOperation([string]$Action, $Previous = $null) {
     if ($Action -ne 'status') {
         foreach ($button in @($saveButton,$pauseButton,$resumeButton,$deleteButton,$refreshButton)) { $button.Enabled=$false }
         $status.Text = switch ($Action) { 'register' {'설정 저장 및 예약 등록 중…'}; 'pause' {'예약 작업과 자동 실행을 정지하는 중…'}; 'resume' {'예약 작업과 자동 실행을 다시 시작하는 중…'} }
-    } else { $status.Text = '예약 작업 상태를 확인하는 중…' }
+    } else { $status.Text = '예약 작업 상태를 확인하는 중…'
+ }
     if ($script:TaskJob) { $script:QueuedOperation=@{action=$Action;previous=$Previous}; return }
     $script:TaskJob=Start-WorkdayTaskJob $script:TaskContext $CurrentInstallRoot $Action $Previous
 }
@@ -257,14 +258,30 @@ $recoveryHelp.Location = New-Object Drawing.Point(20, 694)
 $recoveryHelp.TextAlign = 'MiddleCenter'
 $form.Controls.Add($recoveryHelp)
 
+foreach($control in $form.Controls){$control.SetBounds([int]($control.Left*1.1),[int]($control.Top*1.04),[int]($control.Width*1.1),[int]($control.Height*1.04))}
+foreach($control in $timeGroup.Controls){$control.SetBounds([int]($control.Left*1.1),[int]($control.Top*1.04),[int]($control.Width*1.1),[int]($control.Height*1.04));if($control -is [Windows.Forms.DateTimePicker]){$control.Font=New-Object Drawing.Font('Malgun Gothic',12)}}
+$title.AutoSize=$false;$title.Location=New-Object Drawing.Point(25,17);$title.Size=New-Object Drawing.Size(455,36);$title.TextAlign='MiddleCenter'
+foreach($label in @($idLabel,$pwLabel,$monthlyLabel,$dailyLabel)){$label.AutoSize=$false;$label.Width=91;$label.Height=29;$label.TextAlign='MiddleCenter'}
+$pwHelp.AutoSize=$false;$pwHelp.Location=New-Object Drawing.Point(145,204);$pwHelp.Size=New-Object Drawing.Size(320,24);$pwHelp.TextAlign='MiddleCenter'
+$monthlyBox.Top=237;$monthlyLabel.Top=237;$hoursLabel.AutoSize=$false;$hoursLabel.Location=New-Object Drawing.Point(255,237);$hoursLabel.Size=New-Object Drawing.Size(220,28);$hoursLabel.TextAlign='MiddleLeft'
+$saveButton.Location=New-Object Drawing.Point(35,548);$saveButton.Size=New-Object Drawing.Size(440,46)
 . (Join-Path $PSScriptRoot 'theme.ps1')
 Set-UiTheme $form
 $saveButton.BackColor = $script:UiMint
-$pauseButton.BackColor = $script:UiOrange
-$deleteButton.BackColor = $script:UiInk
-$status.BackColor = [Drawing.Color]::White
+$pauseButton.BackColor = $script:UiBackground
+$resumeButton.BackColor=$script:UiBackground
+$deleteButton.BackColor = [Drawing.ColorTranslator]::FromHtml('#F1E9E3')
+$status.BackColor = [Drawing.ColorTranslator]::FromHtml('#EDF6F0')
 $status.Text = '예약 작업 상태를 확인하는 중…'
+function Sync-ControlSelection {
+ if(Test-Path -LiteralPath $SettingsFile){
+  try{$stored=Get-Content -LiteralPath $SettingsFile -Raw -Encoding UTF8|ConvertFrom-Json;$paused=($stored.enabled -eq $false) -or (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'dist/automation.stop'));[WorkdaySoftTheme]::SetSelected($pauseButton,$paused);[WorkdaySoftTheme]::SetSelected($resumeButton,(-not $paused))}catch{}
+ }
+}
+Sync-ControlSelection
+
 if ($SelfTest) {
+    if($PreviewPath){$idBox.Text='예시계정';$pwBox.Clear();$status.Text='자동출근: 사용 중 / 자동퇴근: 사용 중';[WorkdaySoftTheme]::SetSelected($resumeButton,$true);Write-UiPreview $form $PreviewPath}
     foreach ($control in $form.Controls) {
         if ($control.Right -gt $form.ClientSize.Width -or $control.Bottom -gt $form.ClientSize.Height) { throw '관리 화면 컨트롤이 창 경계를 벗어났습니다.' }
     }
@@ -285,7 +302,7 @@ $taskTimer.Add_Tick({
         if($job.pipeline.Streams.Error.Count){throw $job.pipeline.Streams.Error[0].Exception}
         $result=$results[-1]
         $status.Text=if($result.message){$result.message}else{$result.lines -join "`n"}
-        if($job.action -eq 'register'){$pwBox.Clear()}
+        if($job.action -eq 'register'){$pwBox.Clear()};Sync-ControlSelection
     } catch {
         $cause=$_.Exception
         while($cause.InnerException){$cause=$cause.InnerException}

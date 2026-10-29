@@ -131,7 +131,8 @@ function Render-Calendar {
   $rule=$script:savedRules.$key
   $marker=if($rule.vacation -and $rule.exclude_overtime){' 휴·제'}elseif($rule.vacation){' 휴'}elseif($rule.exclude_overtime){' 제'}else{''}
   $button.Text=[string]$number+$marker
-  $button.BackColor=if($script:chosenDates.Contains($key)){[Drawing.ColorTranslator]::FromHtml('#5E7C93')}elseif($rule.vacation){[Drawing.ColorTranslator]::FromHtml('#A0B6B7')}elseif($rule.exclude_overtime){[Drawing.ColorTranslator]::FromHtml('#9EB4C3')}else{[Drawing.ColorTranslator]::FromHtml('#E7EBED')}
+  $button.BackColor=if($script:chosenDates.Contains($key)){[Drawing.ColorTranslator]::FromHtml('#52677D')}elseif($rule.vacation){[Drawing.ColorTranslator]::FromHtml('#A0B6B7')}elseif($rule.exclude_overtime){[Drawing.ColorTranslator]::FromHtml('#9EB4C3')}else{[Drawing.ColorTranslator]::FromHtml('#F1F4F5')}
+  if('WorkdaySoftTheme' -as [type]){[WorkdaySoftTheme]::SetSelected($button,$script:chosenDates.Contains($key))}
   $button.ForeColor=[Drawing.ColorTranslator]::FromHtml('#343C46')
  }
  $chosenLabel.Text="선택 $($script:chosenDates.Count)개 · 재클릭하면 해제"
