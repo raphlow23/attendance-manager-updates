@@ -14,7 +14,7 @@ import business_trips as trips
 def record(day='2026-10-01',category='센터',start='13:00',end='17:00'):
     return dict(date=day,category=category,start=start,end=end,location='출장 장소',purpose='현장 협의',transport='대중교통')
 
-@unittest.skipUnless((ROOT/'app/trip-expenses-template.txt').exists(),'Private local template test fixture required')
+@unittest.skipUnless((ROOT/'app/trip-expenses-template.txt').exists(),'Bundled blank template required')
 class ExpenseExport(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.path=Path(self.temp.name)/export.export_filename('2026-10')
@@ -28,6 +28,12 @@ class ExpenseExport(unittest.TestCase):
             result=trips.run_job(app,dict(operation='export',month='2026-10',name='시험',output_path=str(self.path)))
             self.assertEqual(result['center_count'],1);self.assertEqual(result['excluded_count'],1)
             attendance.assert_not_called();site.return_value.submit.assert_not_called();driver.quit.assert_called_once()
+    def test_export_uses_builtin_even_with_legacy_template_setting(self):
+        app=SimpleNamespace(file_lock=lambda *a,**kw:nullcontext());driver=Mock()
+        with patch('monthly_reconcile._settings',return_value={}),patch('monthly_reconcile._connect',return_value=(driver,Mock())),patch('trip_site.TripPage') as site:
+            site.return_value.existing.return_value=[record()]
+            result=trips.run_job(app,dict(operation='export',month='2026-10',name='시험',output_path=str(self.path),template_path='missing-old-local-file.xlsx'))
+            self.assertTrue(result['ok']);self.assertEqual(result['center_count'],1)
     def test_export_missing_name_does_not_connect(self):
         with patch('monthly_reconcile._connect') as connect:
             with self.assertRaises(ValueError):trips.run_job(Mock(),dict(operation='export',month='2026-10',name='',output_path=str(self.path)))
@@ -48,7 +54,7 @@ class ExpenseExport(unittest.TestCase):
         export.export_records([record()],'2026-10',self.path,'이름')
         with ZipFile(io.BytesIO(base64.b64decode(export.TEMPLATE.read_bytes()))) as template,ZipFile(self.path) as result:
             for part in ['xl/styles.xml','xl/theme/theme1.xml','xl/printerSettings/printerSettings1.bin']:
-                self.assertEqual(template.read(part),result.read(part))
+                if part in template.namelist():self.assertEqual(template.read(part),result.read(part))
             a=ET.fromstring(template.read('xl/worksheets/sheet1.xml'));b=ET.fromstring(result.read('xl/worksheets/sheet1.xml'))
             for name in ['cols','mergeCells','pageMargins','pageSetup','printOptions']:
                 aa=a.find('s:'+name,export.NS);bb=b.find('s:'+name,export.NS)
@@ -79,6 +85,11 @@ class ExpenseExport(unittest.TestCase):
         export.export_records([row],'2026-10',self.path,'이름')
         c=load_workbook(self.path,data_only=False).active['K12']
         self.assertEqual(c.data_type,'s');self.assertEqual(c.value,row['purpose'])
+    def test_built_in_template_has_no_device_or_source_metadata(self):
+        with ZipFile(io.BytesIO(base64.b64decode(export.TEMPLATE.read_bytes()))) as z:
+            self.assertFalse(any(n.startswith('xl/printerSettings/') for n in z.namelist()))
+            self.assertEqual(len(ET.fromstring(z.read('docProps/core.xml'))),0)
+            self.assertNotIn('absPath',z.read('xl/workbook.xml').decode('utf-8'))
     def test_original_template_cannot_be_overwritten(self):
         original=Path(self.temp.name)/'original.xlsx';before=base64.b64decode(export.TEMPLATE.read_bytes());original.write_bytes(before)
         with self.assertRaisesRegex(ValueError,'원본 양식'):

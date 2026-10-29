@@ -113,10 +113,9 @@ $exportName=New-Object Windows.Forms.TextBox;$exportName.Location=New-Object Dra
 [void](Text-Label '직위' 245 114 50)
 $exportPosition=New-Object Windows.Forms.TextBox;$exportPosition.Location=New-Object Drawing.Point(300,110);$exportPosition.Width=120;$exportPosition.Text='대리';$form.Controls.Add($exportPosition)
 $exportButton=Make-Button '센터 출장 엑셀 내보내기' 855 105 355
-$templateButton=Make-Button '엑셀 양식 선택' 445 105 210
-$script:exportTemplatePath=''
+[void](Text-Label '내장 양식 사용 · 센터만 내보내기' 445 114 370)
 $profilePath=Join-Path $PSScriptRoot 'dist/출장내보내기설정.json'
-try{if(Test-Path -LiteralPath $profilePath){$profile=Get-Content -LiteralPath $profilePath -Raw -Encoding UTF8|ConvertFrom-Json;$exportName.Text=[string]$profile.name;$exportPosition.Text=[string]$profile.position;$script:exportTemplatePath=[string]$profile.template_path}}catch{}
+try{if(Test-Path -LiteralPath $profilePath){$profile=Get-Content -LiteralPath $profilePath -Raw -Encoding UTF8|ConvertFrom-Json;$exportName.Text=[string]$profile.name;$exportPosition.Text=[string]$profile.position}}catch{}
 $grid=New-Object WorkdayTripEntryGrid;$grid.Location=New-Object Drawing.Point(20,190);$grid.Size=New-Object Drawing.Size(1190,335);$grid.Anchor='Top,Bottom,Left,Right'
 $grid.EditMode='EditProgrammatically';$grid.AllowUserToAddRows=$false;$grid.AllowUserToDeleteRows=$false;$grid.RowHeadersVisible=$false;$grid.AutoSizeColumnsMode='Fill';$grid.RowTemplate.Height=32
 $check=New-Object Windows.Forms.DataGridViewCheckBoxColumn;$check.CellTemplate=New-Object WorkdayTripCheckCell;$check.Name='selected';$check.HeaderText='선택';$check.FillWeight=40;[void]$grid.Columns.Add($check)
@@ -209,23 +208,13 @@ function Start-TripJob($job){
  foreach($c in $form.Controls){if($c -ne $status){$c.Enabled=$false}}
  $status.Text=if($job.operation -eq 'allocate'){'선택한 날짜 안에서 시간을 배분 중입니다. 사이트에는 접속하지 않습니다.'}elseif($job.operation -eq 'export'){'선택 월의 등록된 출장 내역을 조회해 센터 기록만 엑셀로 내보내는 중입니다.'}elseif($job.operation -eq 'scan'){'근태관리에서 출퇴근 등록 날짜를 조회 중입니다.'}elseif($job.operation -eq 'inspect'){'선택 완료: 기존 출장 내역을 확인 중입니다. 아직 등록하지 않습니다.'}else{'사이트 처리 중입니다. 등록은 하루씩 확인한 뒤 다음 날짜로 진행합니다.'};$timer.Start()
 }
-function Select-ExportTemplate {
- $picker=New-Object Windows.Forms.OpenFileDialog;$picker.Filter='출장비 지급내역서 양식 (*.xlsx)|*.xlsx';$picker.Title='원본 출장비 지급내역서 엑셀 선택 (PC에만 보관)'
- try{if($picker.ShowDialog($form) -ne 'OK'){return $false};$script:exportTemplatePath=$picker.FileName
-  $folder=Split-Path -Parent $profilePath;New-Item -ItemType Directory -Path $folder -Force|Out-Null
-  [IO.File]::WriteAllText($profilePath,(@{name=$exportName.Text.Trim();position=$exportPosition.Text.Trim();template_path=$script:exportTemplatePath}|ConvertTo-Json),(New-Object Text.UTF8Encoding($false)))
-  $status.Text='엑셀 양식 선택 완료: '+[IO.Path]::GetFileName($script:exportTemplatePath);return $true
- }finally{$picker.Dispose()}
-}
-$templateButton.Add_Click({try{[void](Select-ExportTemplate)}catch{$status.Text=$_.Exception.Message}})
 $exportButton.Add_Click({
  try{
   if([string]::IsNullOrWhiteSpace($exportName.Text)){throw '엑셀 문서에 표시할 성명을 입력하세요.'}
-  if(-not $script:exportTemplatePath -or -not(Test-Path -LiteralPath $script:exportTemplatePath)){if(-not(Select-ExportTemplate)){return}}
   $selectedMonth=Selected-Month;$day=[DateTime]::ParseExact($selectedMonth+'-01','yyyy-MM-dd',[Globalization.CultureInfo]::InvariantCulture)
   $dialog=New-Object Windows.Forms.SaveFileDialog;$dialog.Filter='Excel 통합 문서 (*.xlsx)|*.xlsx';$dialog.DefaultExt='xlsx';$dialog.AddExtension=$true;$dialog.OverwritePrompt=$true
   $dialog.FileName=('{0} 출장비지급내역({1}월)_.xlsx' -f $day.Year,$day.Month)
-  try{if($dialog.ShowDialog($form) -eq 'OK'){Start-TripJob @{operation='export';month=$selectedMonth;output_path=$dialog.FileName;name=$exportName.Text.Trim();position=$exportPosition.Text.Trim();template_path=$script:exportTemplatePath}}}finally{$dialog.Dispose()}
+  try{if($dialog.ShowDialog($form) -eq 'OK'){Start-TripJob @{operation='export';month=$selectedMonth;output_path=$dialog.FileName;name=$exportName.Text.Trim();position=$exportPosition.Text.Trim()}}}finally{$dialog.Dispose()}
  }catch{[void][Windows.Forms.MessageBox]::Show($form,$_.Exception.Message,'엑셀 내보내기','OK','Information')}
 })
 $scan.Add_Click({try{$script:reviewId=$null;Start-TripJob @{operation='scan';month=(Selected-Month);total=(Target-Amount)}}catch{$status.Text=$_.Exception.Message}})
@@ -278,7 +267,7 @@ $timer.Add_Tick({
   $result=Get-Content -LiteralPath ($script:jobPath+'.result.json') -Raw -Encoding UTF8|ConvertFrom-Json
   if($result.summary){$script:existing=[int]$result.summary.existing_amount}
   if($script:operation -eq 'export'){
-   if($result.ok){[IO.File]::WriteAllText($profilePath,(@{name=$exportName.Text.Trim();position=$exportPosition.Text.Trim();template_path=$script:exportTemplatePath}|ConvertTo-Json),(New-Object Text.UTF8Encoding($false)))}
+   if($result.ok){[IO.File]::WriteAllText($profilePath,(@{name=$exportName.Text.Trim();position=$exportPosition.Text.Trim()}|ConvertTo-Json),(New-Object Text.UTF8Encoding($false)))}
   }elseif($script:operation -eq 'submit'){
    $script:reviewId=$null
    if($result.all_rows){$script:allRows=@($result.all_rows);Change-Stage 1}
@@ -303,6 +292,7 @@ $form.Add_FormClosing({if($script:worker){$_.Cancel=$true;$status.Text='진행 �
 . (Join-Path $PSScriptRoot 'theme.ps1');Set-UiTheme $form;$submit.BackColor=$script:UiOrange
 Update-Totals
 if($SelfTest){
+ if(@($form.Controls|Where-Object{$_.Text -eq '엑셀 양식 선택'}).Count){throw '원본 양식 선택 버튼이 남아 있음'}
  if(@($form.Controls|Where-Object{$_.Text -eq '기존 출장 불러오기·수정'}).Count){throw '중복 버튼이 남아 있음'}
  $fixture='[{"date":"2026-10-07","weekday":"수","checkin":"09:00","checkout":"18:00","mandatory":false,"event_day":true,"selected":true,"blocked":false,"hours":4,"start_hour":9,"start":"09:00","end":"18:00","amount":20000,"existing_amount":0,"location":"","purpose":"","status":"선택 가능"},{"date":"2026-10-13","weekday":"화","checkin":"08:35","checkout":"18:00","mandatory":false,"selected":false,"blocked":false,"hours":4,"start_hour":13,"start":"13:00","end":"17:00","amount":20000,"existing_amount":0,"location":"","purpose":"","status":"선택 가능"},{"date":"2026-10-14","weekday":"수","checkin":"08:30","checkout":"18:00","mandatory":false,"selected":false,"blocked":false,"hours":4,"start_hour":13,"start":"13:00","end":"17:00","amount":20000,"existing_amount":0,"location":"","purpose":"","status":"선택 가능"}]'|ConvertFrom-Json
  $script:reviewId='fixture';$script:allRows=@($fixture);$total.Value=20;if((Target-Amount) -ne 200000){throw '만원 입력 변환 실패'};$total.Value=3;Render-Rows $script:allRows

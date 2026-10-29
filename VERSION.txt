@@ -1,5 +1,5 @@
 Attendance Manager portable source installer
-Package date: 2026-10-29-r50
+Package date: 2026-10-29-r51
 Runtime: CPython 3.12.10 official embeddable 64-bit package
 Check-in: 08:30-08:55, 5-minute steps
 Checkout: 18:05-18:55, 5-minute steps

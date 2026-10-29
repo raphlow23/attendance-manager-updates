@@ -7,7 +7,7 @@ version = int((ROOT / 'app' / 'release-version.txt').read_text().strip())
 output = ROOT / 'releases' / f'attendance-manager-v{version}.zip'
 output.parent.mkdir(exist_ok=True)
 files = sorted(p for p in (ROOT / 'app').iterdir()
-               if p.name!='trip-expenses-template.txt' and p.is_file() and p.suffix in ('.py', '.ps1', '.exe', '.txt'))
+               if p.is_file() and p.suffix in ('.py', '.ps1', '.exe', '.txt'))
 with ZipFile(output, 'w', ZIP_DEFLATED) as archive:
     for path in files:
         archive.write(path, path.name)

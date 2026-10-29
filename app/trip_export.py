@@ -21,7 +21,7 @@ P='http://schemas.openxmlformats.org/package/2006/relationships'
 C='http://schemas.openxmlformats.org/package/2006/content-types'
 ET.register_namespace('',S);ET.register_namespace('r',R)
 NS={'s':S}
-TEMPLATE=None  # The user's private reference is selected locally, never shipped.
+TEMPLATE=Path(__file__).with_name('trip-expenses-template.txt')
 
 def read_xml(data):
     mapping={prefix:uri for _,(prefix,uri) in ET.iterparse(io.BytesIO(data),events=['start-ns'])}
@@ -161,6 +161,7 @@ def export_records(records,month,output_path,name,position='대리',template=TEM
         else:original_sheet.set('name',title)
         ET.SubElement(names,f'{{{S}}}definedName',name='_xlnm.Print_Area',localSheetId=str(i)).text=f"'{title}'!$A$1:$L$35"
         cell(root,'A5',f'작성일 : {last.year}년  {last.month}월  {last.day}일')
+        cell(root,'A9','편의센터');cell(root,'J9','현장점검 및 협의 등')
         cell(root,'B9',position);cell(root,'D9',name)
         cell(root,'E9',f'{first:%Y.%m.%d}.~ {last:%Y.%m.%d}.')
         for index in range(19):
@@ -211,8 +212,9 @@ def export_site_records(app,job):
     from trip_site import TripPage
     month=job.get('month');month_date(month)
     if not str(job.get('name') or '').strip():raise ValueError('엑셀에 표시할 성명을 입력하세요.')
-    template=job.get('template_path') or TEMPLATE
-    if template is None or not Path(template).is_file():raise ValueError('엑셀 양식 선택에서 원본 파일을 선택하세요.')
+    # Ignore v50's cached local template path; use the audited built-in blank.
+    template=TEMPLATE
+    if template is None or not Path(template).is_file():raise ValueError('내장 엑셀 양식이 없습니다. 프로그램을 최신 버전으로 업데이트하세요.')
     with app.file_lock('action',timeout=120):
         driver,_=_connect(app,_settings(app))
         try:
