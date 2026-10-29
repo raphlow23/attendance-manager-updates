@@ -454,3 +454,13 @@ def correct_late_checkin(driver, today, target_for, log, late_from=(9, 0)):
     target = target_for(today)
     if page.edit(today, "checkin", target):
         log(f"{today} 늦은 출근 시간 보정 확인: {target:%H:%M}")
+
+def enforce_event_times(driver,day,mode,log):
+    """Apply the explicitly preconfigured event-day times after registration."""
+    from datetime import datetime,time
+    page=AttendancePage(driver,day);page.open();before=page.record(day)
+    wanted={'checkin':datetime.combine(day,time(9,0))}
+    if mode=='checkout':wanted['checkout']=datetime.combine(day,time(18,5))
+    targets={key:value for key,value in wanted.items() if parse_time(before[key])!=(value.hour,value.minute)}
+    if targets and not page.correct(day,targets,before):raise RuntimeError('행사일 고정 출퇴근 시간 저장을 확인하지 못했습니다.')
+    log(f'{day} 행사일 {"출근 09:00" if mode=="checkin" else "출근 09:00 · 퇴근 18:05"} 확인 완료')

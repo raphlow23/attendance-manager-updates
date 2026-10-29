@@ -29,7 +29,7 @@ SOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
 # include the application directory for our sibling recovery module.
 if SOURCE_DIR not in sys.path:
     sys.path.insert(0, SOURCE_DIR)
-from attendance_recovery import correct_late_checkin, repair_missing_checkouts
+from attendance_recovery import correct_late_checkin, repair_missing_checkouts, enforce_event_times
 from attendance_changes import blocked, rule_for
 
 APP_DIR = (
@@ -208,10 +208,25 @@ def get_overtime_dates(day, state):
     if state.get("overtime_month") and "overtime_dates" in state:
         months.setdefault(state["overtime_month"], state["overtime_dates"])
     if month_key in months:
-        # Existing monthly dates/targets are frozen. Changes take effect when
-        # a new month's plan is generated, preserving past attendance.
+        # Keep the monthly unit and completed dates; replace only unexecuted
+        # dates removed by vacation/event rules with remaining eligible dates.
         plans.setdefault(month_key, {"monthly_hours": len(months[month_key]), "daily_hours": 1})
-        return {key for key in months[month_key] if not blocked(state, key) and not rule_for(state, key).get('exclude_overtime')}
+        original=set(months[month_key])
+        eligible={key for key in original if not blocked(state,key) and not rule_for(state,key).get('exclude_overtime')}
+        protected={key for key in original if state.get('runs',{}).get(key,{}).get('checkout',{}).get('status') in ('success','in_progress','uncertain')}
+        missing=len(original-(eligible|protected))
+        candidates=[key for key in eligible_days(day) if key>=date.today().isoformat() and key not in original
+                    and not blocked(state,key) and not rule_for(state,key).get('exclude_overtime')
+                    and state.get('runs',{}).get(key,{}).get('checkout',{}).get('status') not in ('success','in_progress','uncertain')]
+        if missing and candidates:
+            added=set(random.SystemRandom().sample(candidates,min(missing,len(candidates))))
+            months[month_key]=sorted(eligible|protected|added)
+            if state.get('overtime_month')==month_key:state['overtime_dates']=months[month_key]
+            for key in added:state.get('runs',{}).get(key,{}).get('checkout',{}).pop('target',None)
+            save_json(STATE_FILE,state)
+            log_event(f'{month_key} 휴가·행사 제외 후 미실행 연장일 재배정: {", ".join(sorted(added))}')
+            eligible|=added
+        return eligible
 
     settings = load_json(SETTINGS_FILE, {})
     hours, daily = validate_overtime_capacity(settings, day)
@@ -250,6 +265,12 @@ def choose_target(mode, today, state):
         return None, dict(action_state, status='success')
     if action_state.get("status") in {"success", "in_progress", "uncertain"}:
         return None, action_state
+    if rule_for(state,today).get('exclude_overtime'):
+        target=datetime.combine(today,dt_time(9,0) if mode=='checkin' else dt_time(18,5))
+        action_state.update(target=target.isoformat(timespec='minutes'),kind='행사 출근' if mode=='checkin' else '행사 퇴근')
+        action_state.pop('daily_overtime_hours',None)
+        save_json(STATE_FILE,state)
+        return target,action_state
     if mode=='checkout':refresh_checkout_target(today,state,action_state)
     if (mode == 'checkout' and rule_for(state, today).get('exclude_overtime')
             and action_state.get('target') and datetime.fromisoformat(action_state['target']).hour >= 19):
@@ -345,6 +366,10 @@ def recovery_target(day):
     with file_lock("state"):
         state = load_json(STATE_FILE, {"runs": {}})
         run = state.setdefault("runs", {}).setdefault(day.isoformat(), {}).setdefault("checkout", {})
+        if rule_for(state,day).get('exclude_overtime'):
+            target=datetime.combine(day,dt_time(18,5))
+            run['target']=target.isoformat(timespec='minutes');save_json(STATE_FILE,state)
+            return target
         if run.get("target"):
             # Called only after the site confirms that checkout is missing.
             refresh_checkout_target(day,state,run)
@@ -474,11 +499,13 @@ def perform_action(user_id, password, mode):
             if driver.find_elements(By.CSS_SELECTOR, checkout_selector):
                 raise RuntimeError("퇴근 등록 후 홈 화면 검증에 실패했습니다.")
 
+        event_day=bool(rule_for(load_json(STATE_FILE,{}),date.today()).get('exclude_overtime'))
+        if event_day:enforce_event_times(driver,date.today(),mode,log_event)
         if mode == "checkin":
             health_phase(mode, 'attendance_corrections', 1800)
             _, end_in, _, _, _ = time_settings(load_json(SETTINGS_FILE, {}))
             late_from = max(9 * 60, end_in + 1)
-            if datetime.now().hour * 60 + datetime.now().minute >= late_from:
+            if not event_day and datetime.now().hour * 60 + datetime.now().minute >= late_from:
                 try:
                     correct_late_checkin(driver, date.today(), late_checkin_target, log_event, (late_from // 60, late_from % 60))
                 except Exception as error:
@@ -534,7 +561,7 @@ def run_scheduled(mode, immediate=False):
             success = action_state.get("status") == "success"
             log_event(f"{today.isoformat()} {mode} 중복 실행 방지: {action_state.get('status')}")
             return success
-        if immediate:
+        if immediate and not rule_for(state,today).get('exclude_overtime'):
             target = datetime.now()
             action_state["target"] = target.isoformat(timespec="seconds")
             action_state["origin"] = "Windows 로그인"
@@ -555,10 +582,9 @@ def run_scheduled(mode, immediate=False):
                 current_state = load_json(STATE_FILE, {"runs": {}})
                 if blocked(current_state, today):
                     return True
-                if mode == 'checkout' and rule_for(current_state, today).get('exclude_overtime'):
-                    revised, _ = choose_target(mode, today, current_state)
-                    if revised is not None:
-                        target = revised
+                revised, _ = choose_target(mode, today, current_state)
+                if revised is not None:
+                    target = revised
                 current_run = current_state.get("runs", {}).get(today.isoformat(), {}).get(mode, {})
                 if current_run.get("status") == "success":
                     return True
@@ -581,10 +607,12 @@ def run_scheduled(mode, immediate=False):
             state = load_json(STATE_FILE, {"runs": {}})
             if blocked(state, today):
                 return True
-            if mode == 'checkout' and rule_for(state, today).get('exclude_overtime'):
-                revised, _ = choose_target(mode, today, state)
-                if revised is not None and revised > datetime.now():
-                    return False
+            revised, _ = choose_target(mode, today, state)
+            if revised is not None and revised > datetime.now():
+                waiting=state.setdefault('runs',{}).setdefault(str(today),{}).setdefault(mode,{})
+                waiting.update(status='retryable',retry_at=revised.isoformat(timespec='seconds'))
+                save_json(STATE_FILE,state)
+                return False
             day_runs = state.setdefault("runs", {}).setdefault(today.isoformat(), {})
             if mode == "checkin" and day_runs.get("checkout", {}).get("status") == "success":
                 return True

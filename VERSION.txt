@@ -1,5 +1,5 @@
 ﻿Attendance Manager portable source installer
-Package date: 2026-10-29-r59
+Package date: 2026-10-29-r60
 Runtime: CPython 3.12.10 official embeddable 64-bit package
 Check-in: 08:30-08:55, 5-minute steps
 Checkout: 18:05-18:55, 5-minute steps
@@ -20,4 +20,4 @@ Resident worker + separate Windows EXE guardian; bounded restart, health and net
 Intentional stop flag; duplicate prevention; security diagnostics without policy changes
 Public update channel: https://github.com/raphlow23/attendance-manager-updates
 Live signed code update and user-data preservation test passed
-Display version: 1.5.9
+Display version: 1.6.0
