@@ -138,8 +138,9 @@ public static class WorkdaySoftTheme {
    g.Restore(state);
   }
  }
+ public static void SolidFace(Graphics g,RectangleF r,float radius,Color color){g.SmoothingMode=SmoothingMode.AntiAlias;using(var path=Round(r,radius))using(var brush=new SolidBrush(color))g.FillPath(brush,path);}
  public static void Inset(Graphics g,RectangleF r,float radius,Color color){
-  SurfacePaint(g,r,radius,Mix(color,Ink,color.GetBrightness()<.64f?.08f:.045f),false);
+  SolidFace(g,r,radius,Mix(color,Ink,.12f));
 
  }
  class ButtonState{public ButtonState(){} public bool Down,Hover,Selected;}
@@ -149,7 +150,7 @@ public static class WorkdaySoftTheme {
  public static void ButtonPaint(Graphics g,Rectangle r,Button b,bool pressed,bool hover){
   DrawScene(g,b);RectangleF face=new RectangleF(r.X,r.Y,r.Width,r.Height);Color fill=b.Enabled?b.BackColor:Surface;
   if(pressed)fill=Mix(fill,Ink,.10f);else if(b.Focused)fill=Mix(fill,Color.White,.15f);else if(hover)fill=Mix(fill,Color.White,.10f);
-  if(pressed||IsPressed(b))Inset(g,face,Math.Min(10,(r.Height-3)/2f),fill);else if(fill.GetBrightness()>.64f)Glass(g,b,face,Math.Min(10,(r.Height-3)/2f),false,180);else SurfacePaint(g,face,Math.Min(10,(r.Height-3)/2f),fill,false);
+  if(pressed||IsPressed(b))Inset(g,face,Math.Min(10,(r.Height-3)/2f),fill);else SolidFace(g,face,Math.Min(10,(r.Height-3)/2f),fill);
   Color text=!b.Enabled?Color.FromArgb(126,139,148):(fill.GetBrightness()>.64f?Ink:Color.White);
   Rectangle content=Rectangle.Inflate(r,-5,-2);if(pressed)content.Offset(1,1);
   TextRenderer.DrawText(g,b.Text,b.Font,content,text,TextFormatFlags.HorizontalCenter|TextFormatFlags.VerticalCenter|TextFormatFlags.SingleLine|TextFormatFlags.EndEllipsis);
@@ -157,7 +158,7 @@ public static class WorkdaySoftTheme {
  }
  public static void PreviewButton(Graphics g,RectangleF r,Button b){
   Color fill=b.Enabled?b.BackColor:Surface;
-  var face=r;if(IsPressed(b))Inset(g,face,Math.Min(10,(r.Height-3)/2f),fill);else if(fill.GetBrightness()>.64f)Glass(g,b.FindForm(),face,Math.Min(10,(r.Height-3)/2f),false,180);else SurfacePaint(g,face,Math.Min(10,(r.Height-3)/2f),fill,false);
+  var face=r;if(IsPressed(b))Inset(g,face,Math.Min(10,(r.Height-3)/2f),fill);else SolidFace(g,face,Math.Min(10,(r.Height-3)/2f),fill);
   Color text=!b.Enabled?Color.FromArgb(126,139,148):(fill.GetBrightness()>.64f?Ink:Color.White);
   using(var brush=new SolidBrush(text))using(var format=new StringFormat()){format.Alignment=StringAlignment.Center;format.LineAlignment=StringAlignment.Center;g.DrawString(b.Text,b.Font,brush,RectangleF.Inflate(r,-5,-2),format);}
  }
@@ -184,7 +185,7 @@ public static class WorkdaySoftTheme {
      NativeRect bounds;if(!GetClientRect(Handle,out bounds))return;
      int width=bounds.Right,height=bounds.Bottom;
      if(combo){int aw=Math.Min(28,width);PaintArrow(g,new Rectangle(width-aw+1,2,aw-3,height-4),false,false,owner.Enabled);}
-     else{int half=height/2;PaintArrow(g,new Rectangle(1,1,width-2,half-2),true,pressed>=0&&pressed<half,owner.Enabled);PaintArrow(g,new Rectangle(1,half+1,width-2,height-half-2),false,pressed>=half,owner.Enabled);}
+     else{g.Clear(Color.FromArgb(251,252,254));int half=height/2;PaintArrow(g,new Rectangle(1,1,width-2,half-2),true,pressed>=0&&pressed<half,owner.Enabled);PaintArrow(g,new Rectangle(1,half+1,width-2,height-half-2),false,pressed>=half,owner.Enabled);}
     }}catch(ObjectDisposedException){}catch(ArgumentException){}catch(ExternalException){}
    }
   }
@@ -193,15 +194,15 @@ public static class WorkdaySoftTheme {
  public static int InputSkinCount(Control input){InputDecoration value;return Inputs.TryGetValue(input,out value)?value.Count:0;}
  static void PaintArrow(Graphics g,Rectangle rect,bool up,bool pressed,bool enabled){
   if(rect.Width<3||rect.Height<3)return;
-  Color fill=enabled?Color.FromArgb(82,103,125):Color.FromArgb(203,213,221);
-  if(pressed)Inset(g,rect,5,fill);else SurfacePaint(g,rect,5,fill,false);
+  Color fill=enabled?Color.FromArgb(0,99,156):Color.FromArgb(203,213,221);
+  if(pressed)Inset(g,rect,5,fill);else SolidFace(g,rect,5,fill);
   float x=rect.Left+rect.Width/2f,y=rect.Top+rect.Height/2f;float k=Math.Min(4,rect.Width/4f);
   using(var pen=new Pen(enabled?Color.White:Ink,1.4f)){g.SmoothingMode=SmoothingMode.AntiAlias;g.DrawLines(pen,new PointF[]{new PointF(x-k,y+(up?1:-1)),new PointF(x,y+(up?-2:2)),new PointF(x+k,y+(up?1:-1))});}
  }
  class InputDecoration{
   public int Count{get{return arrows.Count;}}
   Control owner;List<ArrowWindow> arrows=new List<ArrowWindow>();HashSet<IntPtr> handles=new HashSet<IntPtr>();
-  void Add(IntPtr handle,bool combo){if(handle!=IntPtr.Zero&&handles.Add(handle))arrows.Add(new ArrowWindow(owner,handle,combo));}
+  void Add(IntPtr handle,bool combo){if(handle!=IntPtr.Zero&&handles.Add(handle)){if(!combo)RemoveFrame(handle);arrows.Add(new ArrowWindow(owner,handle,combo));}}
   public InputDecoration(Control value){owner=value;owner.HandleCreated+=(s,e)=>Bind();owner.VisibleChanged+=(s,e)=>Bind();owner.HandleDestroyed+=(s,e)=>Clear();owner.Disposed+=(s,e)=>Clear();foreach(Control child in owner.Controls){child.HandleCreated+=(s,e)=>Bind();}owner.ControlAdded+=(s,e)=>{e.Control.HandleCreated+=(a,b)=>Bind();};owner.EnabledChanged+=(s,e)=>owner.Invalidate();Bind();}
   void Clear(){foreach(var arrow in arrows)if(arrow.Handle!=IntPtr.Zero)arrow.ReleaseHandle();arrows.Clear();handles.Clear();}
   void Bind(){if(owner.IsDisposed||!owner.IsHandleCreated)return;
@@ -213,7 +214,8 @@ public static class WorkdaySoftTheme {
  [DllImport("user32.dll",EntryPoint="GetWindowLongW")] static extern int GetStyle(IntPtr hwnd,int index);
  [DllImport("user32.dll",EntryPoint="SetWindowLongW")] static extern int SetStyle(IntPtr hwnd,int index,int value);
  [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr hwnd,IntPtr after,int x,int y,int w,int h,int flags);
- static void RemoveEditorFrame(Control c){if(!c.IsHandleCreated)return;SetStyle(c.Handle,-16,GetStyle(c.Handle,-16)&~0x800000);SetStyle(c.Handle,-20,GetStyle(c.Handle,-20)&~0x200);SetWindowPos(c.Handle,IntPtr.Zero,0,0,0,0,0x37);}
+ static void RemoveFrame(IntPtr handle){SetStyle(handle,-16,GetStyle(handle,-16)&~0x800000);SetStyle(handle,-20,GetStyle(handle,-20)&~0x200);SetWindowPos(handle,IntPtr.Zero,0,0,0,0,0x37);}
+ static void RemoveEditorFrame(Control c){if(c.IsHandleCreated)RemoveFrame(c.Handle);}
  public static void Input(Control input){
   InputDecoration prior;if(Inputs.TryGetValue(input,out prior))return;input.HandleCreated+=(s,e)=>RemoveEditorFrame(input);RemoveEditorFrame(input);Inputs.GetValue(input,c=>new InputDecoration(c));
   var combo=input as ComboBox;
@@ -279,14 +281,14 @@ function Set-UiTheme($Window) {
  Initialize-WorkdayWindows;Set-WorkdayTaskbarWindow $Window
  $iconPath=Join-Path $PSScriptRoot 'attendance.ico';if(Test-Path -LiteralPath $iconPath){$Window.Icon=New-Object Drawing.Icon($iconPath)}
  $script:UiBackground=[Drawing.ColorTranslator]::FromHtml('#F3F5FB');$script:UiInk=[Drawing.ColorTranslator]::FromHtml('#2E4058')
- $script:UiCyan=[Drawing.ColorTranslator]::FromHtml('#318C98');$script:UiMint=[Drawing.ColorTranslator]::FromHtml('#318C98');$script:UiOrange=[Drawing.ColorTranslator]::FromHtml('#318C98')
+ $script:UiCyan=[Drawing.ColorTranslator]::FromHtml('#00639C');$script:UiMint=[Drawing.ColorTranslator]::FromHtml('#00639C');$script:UiOrange=[Drawing.ColorTranslator]::FromHtml('#00639C')
  $Window.BackColor=$script:UiBackground;$Window.ForeColor=$script:UiInk
  function Apply-SoftControls($parent){
   [WorkdaySoftTheme]::Container($parent)
   foreach($control in $parent.Controls){
    if($control -is [Windows.Forms.Button]){
     $primary=$control.Text -match '조회|저장|내보내기|신청|정리|작성|시작|설치'
-    $control.BackColor=if($primary){$script:UiCyan}else{$script:UiBackground};$control.ForeColor=if($primary){[Drawing.Color]::White}else{$script:UiInk}
+    $control.BackColor=$script:UiCyan;$control.ForeColor=[Drawing.Color]::White
     $control.Font=New-Object Drawing.Font('Malgun Gothic',$(if($control.Width -lt 80){9}else{10}),[Drawing.FontStyle]::Bold);$control.Cursor=[Windows.Forms.Cursors]::Hand
     [WorkdaySoftTheme]::ApplyButton($control)
    }elseif($control -is [Windows.Forms.DataGridView]){

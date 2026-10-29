@@ -268,11 +268,12 @@ $saveButton.Location=New-Object Drawing.Point(35,548);$saveButton.Size=New-Objec
 . (Join-Path $PSScriptRoot 'theme.ps1')
 Set-UiTheme $form
 $saveButton.BackColor = $script:UiMint
-$pauseButton.BackColor = $script:UiBackground
-$resumeButton.BackColor=$script:UiBackground
-$deleteButton.BackColor = [Drawing.ColorTranslator]::FromHtml('#F1E9E3')
+$pauseButton.BackColor = $script:UiCyan
+$resumeButton.BackColor=$script:UiCyan
+$deleteButton.BackColor = $script:UiCyan
 $status.BackColor = [Drawing.Color]::Transparent
-$status.Location=New-Object Drawing.Point(24,60);$status.Size=New-Object Drawing.Size(451,56)
+$status.Location=New-Object Drawing.Point(24,60);$status.Size=New-Object Drawing.Size(451,68)
+foreach($control in $form.Controls){if($control -ne $title -and $control -ne $status){$control.Top+=16}}
 $status.Text = '예약 작업 상태를 확인하는 중…'
 function Sync-ControlSelection {
  if(Test-Path -LiteralPath $SettingsFile){
@@ -282,7 +283,9 @@ function Sync-ControlSelection {
 Sync-ControlSelection
 
 if ($SelfTest) {
-    if($PreviewPath){$idBox.Text='예시계정';$pwBox.Clear();$status.Text='자동출근: 사용 중 / 자동퇴근: 사용 중';[WorkdaySoftTheme]::SetSelected($resumeButton,$true);Write-UiPreview $form $PreviewPath}
+    if($PreviewPath){$idBox.Text='예시계정';$pwBox.Clear();$status.Text="자동출근: 사용 중`n자동퇴근: 사용 중`n자동출퇴근로그인: 사용 중`n자동출퇴근점검: 사용 중";[WorkdaySoftTheme]::SetSelected($resumeButton,$true);Write-UiPreview $form $PreviewPath}
+    $needed=[Windows.Forms.TextRenderer]::MeasureText($status.Text,$status.Font,(New-Object Drawing.Size($status.Width,1000)),[Windows.Forms.TextFormatFlags]::WordBreak).Height
+    if($needed -gt $status.Height){throw '상태 문구가 표시 영역에서 잘립니다.'}
     $idWell=[Drawing.Rectangle]::Inflate($idBox.Bounds,3,4)
     if($status.Bounds.IntersectsWith($idWell)){throw '상태 표시와 로그인 입력칸이 겹칩니다.'}
     foreach ($control in $form.Controls) {
