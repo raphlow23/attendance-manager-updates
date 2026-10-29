@@ -23,7 +23,7 @@ def build():
     files += [ROOT / 'app' / name for name in ('ui-host.ps1', 'task-control.ps1', 'attendance_changes.py', 'corrections.ps1')]
     files.append(ROOT / 'app' / 'monthly_reconcile.py')
     files.append(ROOT / 'app' / 'site_access.py')
-    files += [ROOT / 'app' / name for name in ('business_trips.py','trip_site.py','trips.ps1','trip_export.py','trip-expenses-template.txt')]
+    files += [ROOT / 'app' / name for name in ('business_trips.py','trip_site.py','trips.ps1','trip_export.py','trip_delete.py','trip-expenses-template.txt')]
     files.append(ROOT / 'app' / 'overtime-drafts.ps1')
     files += [ROOT / 'app' / name for name in ('install-integration.ps1','uninstall.ps1','제거.exe')]
     files.sort(key=lambda p: p.relative_to(ROOT).as_posix())

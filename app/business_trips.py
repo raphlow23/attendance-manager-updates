@@ -90,7 +90,8 @@ def make_rows(attendance,rules,existing,today):
             except (ValueError,TypeError):row.update(hours=2,start_hour=9,start='09:00',end='11:00',amount=10000,blocked=True,selected=False,status='출퇴근 구간에 2시간 출장 불가')
         if registered:
             ordered=sorted(registered['records'],key=lambda item:item['start'])
-            row.update(hours=registered['hours'],amount=registered['amount'],start=ordered[0]['start'],end=ordered[-1]['end'],start_hour=minutes(ordered[0]['start'])//60,location=ordered[0].get('location',''),purpose=ordered[0].get('purpose',''),blocked=len(registered['records'])!=1,status='기존 등록 · 장소·목적 수정 가능' if len(registered['records'])==1 else '같은 날 여러 출장 · 사이트에서 수정 필요')
+            row['site_record']=dict(ordered[0]) if len(ordered)==1 else None
+            row.update(hours=registered['hours'],amount=registered['amount'],start=ordered[0]['start'],end=ordered[-1]['end'],start_hour=minutes(ordered[0]['start'])//60,start_minute=minutes(ordered[0]['start'])%60,location=ordered[0].get('location',''),purpose=ordered[0].get('purpose',''),blocked=len(registered['records'])!=1,status='기존 등록 · 장소·목적 수정 가능' if len(registered['records'])==1 else '같은 날 여러 출장 · 사이트에서 수정 필요')
             row['category']=ordered[0].get('category',CATEGORY)
             if row['category'] not in CATEGORIES:row.update(blocked=True,status='지원하지 않는 출장 구분 · 사이트에서 확인')
         rows.append(row)
@@ -188,6 +189,9 @@ def run_job(app,job):
     if operation=='export':
         from trip_export import export_site_records
         return export_site_records(app,job)
+    if operation=='delete':
+        from trip_delete import delete_trip
+        return delete_trip(app,job)
     if operation=='allocate':
         _,review=_review(app,job)
         rows=merge_entries(review['rows'],job.get('rows',[]))
@@ -242,6 +246,9 @@ def run_job(app,job):
                     warning=f'기등록 확인 안 됨 ({type(error).__name__}): {detail[:300]}'
                     app.log_event(warning)
                 rows=make_rows(attendance,rules,existing,date.today())
+                if checked:
+                    from trip_delete import confirm_absent_deletions
+                    confirm_absent_deletions(app,month,existing)
                 for row in rows:
                     row['existing_checked']=checked
                     if not checked:row['status']='기등록 확인 전 · 선택 완료 시 재확인'

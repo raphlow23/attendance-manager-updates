@@ -202,6 +202,35 @@ class TripPage:
                 if include_elements:result[-1]['element']=row
         if tables!=1:raise RuntimeError('출장 내역 표를 하나로 확인하지 못했습니다. 중복 확인 전에는 등록하지 않습니다.')
         return result
+    def delete(self,expected,month):
+        self.driver._workday_write_submitted=False
+        self.phase='삭제할 기등록 출장 확인'
+        matches=[r for r in self.existing(month,True) if r['date']==expected['date']]
+        element=one([r['element'] for r in matches],'삭제할 기존 출장')
+        row=matches[0]
+        if {k:v for k,v in row.items() if k!='element'}!=expected:
+            raise RuntimeError('삭제 대상의 내용이 바뀌었습니다. 다시 조회하세요.')
+        controls=visible(element.find_elements(By.CSS_SELECTOR,"a,button,input[type='button'],input[type='submit']"))
+        button=one([c for c in controls if norm(label(c)) in ('삭제','삭제하기','출장삭제','출장삭제하기')],'해당 날짜 출장 삭제 버튼')
+        href=button.get_attribute('href') or ''
+        source=urlsplit(self.driver.current_url);target=urlsplit(href)
+        if target.scheme in ('http','https') and (source.scheme,source.netloc)!=(target.scheme,target.netloc):
+            raise RuntimeError('다른 사이트의 삭제 버튼은 실행하지 않습니다.')
+        guard=getattr(self.driver,'_workday_before_write',None)
+        if callable(guard):guard()
+        self.phase='해당 날짜 삭제 버튼 실행'
+        self.driver._workday_write_submitted=True
+        try:self.driver.execute_script('arguments[0].click()',button)
+        except UnexpectedAlertPresentException:pass
+        self.phase='사이트 출장 삭제 결과 확인'
+        def absent(_):
+            try:self.driver.switch_to.alert.accept()
+            except NoAlertPresentException:pass
+            check=getattr(self.driver,'_workday_check_response',None)
+            if callable(check):check()
+            try:return not any(r['date']==expected['date'] for r in self.existing(month))
+            except (StaleElementReferenceException,UnexpectedAlertPresentException):return False
+        self.wait.until(absent)
     def submit(self,row,month,update=False):
         self.driver._workday_write_submitted=False
         self.phase='기존 출장 행 확인' if update else '신규 출장 입력 폼 확인'
