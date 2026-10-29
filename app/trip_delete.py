@@ -1,7 +1,7 @@
 """Delete one explicitly confirmed recorded trip, then rebuild the available row."""
 import copy,time,uuid
 from datetime import date
-from business_trips import _review,_account,_rules,make_rows,merge_entries,existing_totals,summarize,money
+from business_trips import _review,_account,_rules,make_rows,merge_entries,center_totals,summarize,money
 
 def confirm_absent_deletions(app,month,records):
     present={r['date'] for r in records}
@@ -67,7 +67,7 @@ def delete_trip(app,job):
             prior={r['date']:r for r in review['rows']}
             previous=[dict(prior[r['date']],**r) for r in job.get('rows',review['rows']) if r.get('date') in prior]
             rows=rebuild_rows(attendance,rules,final,previous,key,date.today())
-            amount=sum(v['amount'] for v in existing_totals(final).values())
+            amount=sum(v['amount'] for v in center_totals(final).values())
             fresh=dict(id=uuid.uuid4().hex,month=month,created_at=time.time(),account=review['account'],rules=rules,rows=rows,existing=final,existing_amount=amount,existing_verified=False,initial_existing_checked=True)
             with app.file_lock('state'):
                 state=app.load_json(app.STATE_FILE,{})

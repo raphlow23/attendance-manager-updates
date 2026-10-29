@@ -107,7 +107,7 @@ foreach($label in (Get-WorkdayMonthLabels (Get-Date))){[void]$month.Items.Add($l
 $total=New-Object Windows.Forms.NumericUpDown;$total.Location=New-Object Drawing.Point(360,61);$total.Width=145;$total.Maximum=1000;$total.Increment=1;$total.ThousandsSeparator=$true;$form.Controls.Add($total)
 [void](Text-Label '만원 · 예: 20 = 20만원' 515 65 295)
 $scan=Make-Button '출퇴근 일정 조회' 855 55 355
-$note=Text-Label '출장 구분: 센터·협회 선택 / 이동: 대중교통 · 행사 기본 09~18시 / 일반 기본 13~17시 · 휴가 숨김 · 기등록 날짜·금액을 최초 조회부터 표시 · 저장 전 재확인' 20 150 1190
+$note=Text-Label '목표 합계는 센터만 계산 · 출장 구분: 센터·협회 선택 / 이동: 대중교통 · 행사 기본 09~18시 / 일반 기본 13~17시 · 휴가 숨김 · 기등록 날짜·금액을 최초 조회부터 표시 · 저장 전 재확인' 20 150 1190
 [void](Text-Label '성명' 20 114 50)
 $exportName=New-Object Windows.Forms.TextBox;$exportName.Location=New-Object Drawing.Point(75,110);$exportName.Width=150;$form.Controls.Add($exportName)
 [void](Text-Label '직위' 245 114 50)
@@ -135,8 +135,9 @@ $timer=New-Object Windows.Forms.Timer;$timer.Interval=400
 function Selected-Month{[DateTime]::ParseExact([string]$month.SelectedItem,'yyyy년 MM월',[Globalization.CultureInfo]::InvariantCulture).ToString('yyyy-MM')}
 function Clock-Minutes($value){$text=([string]$value)-replace '\s','';if($text -match '^(\d{1,2}):(\d{1,2})$' -and [int]$Matches[1] -lt 24 -and [int]$Matches[2] -lt 60){return [int]$Matches[1]*60+[int]$Matches[2]};return -1}
 function Target-Amount{return [int]$total.Value*10000}
-function Effective-Existing{return $script:existing-[int](($script:allRows|Where-Object{$_.pending_delete}|Measure-Object -Property existing_amount -Sum).Sum)}
-function Row-Amount($row){if($row.Tag.is_existing){return 0};return [int]$row.Cells['hours'].Value*5000}
+function Prior-CenterAmount($entry){if($null -ne $entry.existing_center_amount){return [int]$entry.existing_center_amount};if($entry.site_record -and $entry.site_record.category -eq '협회'){return 0};return [int]$entry.existing_amount}
+function Effective-Existing{$amount=$script:existing;foreach($entry in $script:allRows){if($entry.pending_delete){$amount-=Prior-CenterAmount $entry}};return $amount}
+function Row-Amount($row){$amount=if([string]$row.Cells['category'].Value -eq '협회'){0}else{[int]$row.Cells['hours'].Value*5000};if($row.Tag.is_existing){$amount-=Prior-CenterAmount $row.Tag};return $amount}
 function Update-Totals {
  if($script:loading){return};$script:loading=$true
  try{
@@ -150,7 +151,7 @@ function Update-Totals {
    $include=[bool]$row.Cells['selected'].Value -and ($script:stage -ne 2 -or -not $blankPurpose)
    if($script:stage -eq 2){if(-not $row.Cells['selected'].Value){$skipped++;$row.Cells['status'].Value='체크 해제 · 등록 제외'}elseif($blankPurpose){$skipped++;$row.Cells['status'].Value='목적 미입력 · 등록 제외'}else{$row.Cells['status'].Value=$(if($entry.is_existing){'기존 출장 수정 대상'}else{'신규 등록 대상'})}}
    if($include){
-    $count++;if(-not $entry.is_existing){$sum+=$hours*5000;$hasNew=$true}
+    $count++;$delta=Row-Amount $row;$sum+=$delta;if($delta -gt 0){$hasNew=$true}
     if($entry.blocked -or $minute -lt 0 -or ($hours -eq 2 -and (Clock-Minutes $end)-($hour*60+$minute) -ne 120) -or (Clock-Minutes $end) -lt ($hour*60+$minute+$hours*60) -or $hour*60+$minute -lt (Clock-Minutes $entry.checkin) -or (Clock-Minutes $end) -gt (Clock-Minutes $entry.checkout)){$valid=$false}
     if([string]::IsNullOrWhiteSpace([string]$row.Cells['location'].Value) -or [string]::IsNullOrWhiteSpace([string]$row.Cells['purpose'].Value)){$details=$false}
    }
@@ -161,10 +162,10 @@ function Update-Totals {
   $left=(Target-Amount)-$effective-$sum
   $result=if($left -gt 0){"출장 추가 필요: $($left/5000)시간 / $($left.ToString('N0'))원 부족"}elseif($left -lt 0){"목표 초과: $((-$left).ToString('N0'))원 · 선택을 줄이세요."}else{'목표 금액·인정시간 일치'}
   if($script:stage -eq 2){$result+=" · 등록 $count 건 / 제외 $skipped 건"}
-  $result+=" · 삭제 예정 $deleteCount 건 (합계 제외)"
+  $result+=" · 삭제 예정 $deleteCount 건 · 협회는 목표 합계 제외"
   if($missing){$result+=' · 기존 출장 확인 필요'}
   if(-not $valid){$result+=' · 출발·복귀를 출퇴근 구간 안으로 조정하세요.'}
-  $summary.Text="목표 $($total.Value.ToString('N0'))만원 / $((Target-Amount)/5000)시간 · 기존 $($effective.ToString('N0'))원 · 선택 $count 일 / $($sum.ToString('N0'))원`r`n$result"
+  $summary.Text="목표 $($total.Value.ToString('N0'))만원 / $((Target-Amount)/5000)시간 · 센터 기존 $($effective.ToString('N0'))원 · 센터 변경 $($sum/5000)시간 / $($sum.ToString('N0'))원`r`n$result"
   $summary.ForeColor=if($left -eq 0 -and $valid -and -not $missing){[Drawing.Color]::DarkGreen}else{[Drawing.Color]::Firebrick}
   $ready=([bool]$script:reviewId -and ($left -ge 0 -or -not $hasNew) -and ($count+$deleteCount) -gt 0 -and $valid -and -not $missing -and -not $script:worker)
   $complete.Enabled=($ready -and $script:stage -eq 1);$submit.Enabled=([bool]$script:reviewId -and ($left -ge 0 -or -not $hasNew) -and ($count+$deleteCount) -gt 0 -and $valid -and $details -and -not $missing -and -not $script:worker -and $script:stage -eq 2)
@@ -260,7 +261,7 @@ $grid.Add_CellValueChanged({param($sender,$eventArgs)
  $row=$grid.Rows[$eventArgs.RowIndex];if(-not $row.Tag){return};$name=$grid.Columns[$eventArgs.ColumnIndex].Name
  $script:loading=$true
  try{
-  if($script:stage -eq 1 -and -not $row.Tag.is_existing -and $name -eq 'selected' -and $row.Cells['selected'].Value -and -not $row.Tag.selected){
+  if($script:stage -eq 1 -and -not $row.Tag.is_existing -and (Row-Amount $row) -gt 0 -and $name -eq 'selected' -and $row.Cells['selected'].Value -and -not $row.Tag.selected){
    $others=0;foreach($other in $grid.Rows){if($other -ne $row -and $other.Cells['selected'].Value){$others+=Row-Amount $other}}
    $left=(Target-Amount)-(Effective-Existing)-$others
    if($left -lt 10000){$row.Cells['selected'].Value=$false;$status.Text='목표 금액을 이미 채웠습니다. 다른 날짜를 해제하거나 시간을 줄이면 다시 선택할 수 있습니다.'}

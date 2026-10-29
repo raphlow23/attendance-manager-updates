@@ -66,9 +66,22 @@ def existing_totals(records):
         totals[key]=dict(hours=hours,amount=hours*RATE,records=entries)
     return totals
 
+def center_totals(records):
+    return existing_totals([r for r in records if r.get('category',CATEGORY)==CATEGORY])
+
+def prior_center_amount(row):
+    if 'existing_center_amount' in row:return row['existing_center_amount']
+    record=row.get('site_record') or {}
+    return row.get('existing_amount',0) if record.get('category',CATEGORY)==CATEGORY else 0
+
+def budget_delta(row):
+    if row.get('pending_delete'):return -prior_center_amount(row)
+    if not row.get('selected') or row.get('blocked'):return 0
+    return (row['amount'] if row.get('category',CATEGORY)==CATEGORY else 0)-(prior_center_amount(row) if row.get('is_existing') else 0)
+
 
 def make_rows(attendance,rules,existing,today):
-    totals=existing_totals(existing);by_date={r['date']:r for r in attendance}
+    totals=existing_totals(existing);center=center_totals(existing);by_date={r['date']:r for r in attendance}
     keys=set(by_date)|{key for key,rule in rules.items() if rule.get('exclude_overtime')}
     rows=[]
     for key in sorted(keys):
@@ -84,6 +97,7 @@ def make_rows(attendance,rules,existing,today):
                  mandatory=False,event_day=event_day,selected=False,existing_checked=True,blocked=not valid or bool(registered and len(registered['records'])!=1),is_existing=bool(registered),
                  category=CATEGORY,location='',purpose='',existing_hours=registered['hours'] if registered else 0,existing_amount=registered['amount'] if registered else 0)
         row['status']=('기존 등록 · 장소·목적 수정 가능' if len(registered['records'])==1 else '같은 날 여러 출장 · 사이트에서 수정 필요') if registered else '선택 가능'
+        row['existing_center_amount']=center.get(key,{}).get('amount',0)
         try:row.update(window(row,4))
         except (ValueError,TypeError):
             try:row.update(window(row,2))
@@ -101,8 +115,8 @@ def make_rows(attendance,rules,existing,today):
 def summarize(rows,total,existing_amount=0):
     money(total)
     raw_existing_amount=existing_amount
-    existing_amount-=sum(r.get('existing_amount',0) for r in rows if r.get('pending_delete'))
-    planned=sum(r['amount'] for r in rows if r.get('selected') and not r.get('blocked') and not r.get('is_existing'))
+    existing_amount-=sum(prior_center_amount(r) for r in rows if r.get('pending_delete'))
+    planned=sum(budget_delta(r) for r in rows if not r.get('pending_delete'))
     remaining=total-existing_amount-planned
     message=(f'출장 추가 필요: {remaining//RATE}시간 / {remaining:,}원 부족' if remaining>0 else
              f'목표 초과: {-remaining//RATE}시간 / {-remaining:,}원' if remaining<0 else '목표 금액·인정시간 일치')
@@ -115,8 +129,8 @@ def allocate(rows,total,existing_amount=0,preferred_hours=4):
     if preferred_hours not in (2,4):raise ValueError('기본 출장 시간을 선택하세요.')
     result=deepcopy(rows)
     remaining=total-existing_amount
-    remaining+=sum(r.get('existing_amount',0) for r in result if r.get('pending_delete'))
-    candidates=[r for r in result if r.get('selected') and not r['blocked'] and not r.get('is_existing') and not r.get('pending_delete')]
+    remaining-=sum(budget_delta(r) for r in result if r.get('pending_delete') or r.get('is_existing'))
+    candidates=[r for r in result if r.get('selected') and not r['blocked'] and not r.get('is_existing') and not r.get('pending_delete') and r.get('category',CATEGORY)==CATEGORY]
     states={0:[]}
     for row in candidates:
         choices=[]
@@ -222,7 +236,7 @@ def run_job(app,job):
         if not review.get('existing_verified'):raise ValueError('선택 완료를 눌러 기존 출장 내역을 먼저 확인하세요.')
         rows=submission_rows(review['rows'],job.get('rows',[]))
         summary=summarize(rows,money(job['total']),review['existing_amount'])
-        if summary['remaining_amount']<0 and any(r['selected'] and not r.get('is_existing') for r in rows):raise ValueError(summary['message']+' · 날짜/시간 선택을 줄이세요.')
+        if summary['remaining_amount']<0 and any(budget_delta(r)>0 for r in rows):raise ValueError(summary['message']+' · 날짜/시간 선택을 줄이세요.')
         if any(r.get('conflict') for r in rows):raise ValueError('연장 제외일의 기존 출장 시간을 사이트에서 먼저 확인하세요.')
         chosen=[r for r in rows if (r['selected'] or r.get('pending_delete')) and not r['blocked']]
         if not chosen:raise ValueError('등록할 출장 날짜를 선택하세요.')
@@ -248,7 +262,7 @@ def run_job(app,job):
                 existing=[];existing_amount=0;checked=False;warning=''
                 try:
                     lookup=TripPage(driver);lookup.open();existing=lookup.existing(month)
-                    existing_amount=sum(v['amount'] for v in existing_totals(existing).values());checked=True
+                    existing_amount=sum(v['amount'] for v in center_totals(existing).values());checked=True
                 except Exception as error:
                     existing=[];existing_amount=0
                     detail=str(error).strip()
@@ -266,11 +280,11 @@ def run_job(app,job):
                 with app.file_lock('state'):
                     state=app.load_json(app.STATE_FILE,{});state['trip_review']=review;app.save_json(app.STATE_FILE,state)
                 summary=summarize(rows,job.get('total',0),existing_amount)
-                days=len(existing_totals(existing)) if checked else 0
-                message=f'근태 날짜 조회 완료 · 기등록 {days}일 / {existing_amount:,}원 반영. 미등록 날짜를 추가 선택하세요. 기존 날짜는 수정 버튼으로 출발·복귀와 장소·목적을 변경합니다.' if checked else '근태 날짜는 조회했습니다. '+warning+' · 현재 금액은 임시 계산이며 선택 완료 시 반드시 확인합니다.'
+                days=len(center_totals(existing)) if checked else 0
+                message=f'근태 날짜 조회 완료 · 센터 기등록 {days}일 / {existing_amount:,}원 반영 (협회 합계 제외). 미등록 날짜를 추가 선택하세요.' if checked else '근태 날짜는 조회했습니다. '+warning+' · 현재 금액은 임시 계산이며 선택 완료 시 반드시 확인합니다.'
                 return dict(ok=True,review_id=review['id'],rows=rows,summary=summary,message=message,existing_checked=checked)
             trips=TripPage(driver);trips.open();existing=trips.existing(month);trips.check_options()
-            existing_amount=sum(v['amount'] for v in existing_totals(existing).values())
+            existing_amount=sum(v['amount'] for v in center_totals(existing).values())
             if operation=='inspect':
                 fresh_rows=make_rows(attendance,rules,existing,date.today())
                 previous={r['date']:r for r in rows}
@@ -289,7 +303,7 @@ def run_job(app,job):
                 with app.file_lock('state'):
                     state=app.load_json(app.STATE_FILE,{});state['trip_review']=review;app.save_json(app.STATE_FILE,state)
                 summary=summarize(rows,job['total'],existing_amount)
-                ready=any((r['selected'] or r.get('pending_delete')) and not r['blocked'] for r in rows) and (summary['remaining_amount']>=0 or not any(r['selected'] and not r.get('is_existing') for r in rows)) and not any(r.get('conflict') for r in rows)
+                ready=any((r['selected'] or r.get('pending_delete')) and not r['blocked'] for r in rows) and (summary['remaining_amount']>=0 or not any(budget_delta(r)>0 for r in rows)) and not any(r.get('conflict') for r in rows)
                 return dict(ok=True,review_id=review['id'],rows=rows,summary=summary,ready=ready,message='기존 출장 확인 완료. 선택 날짜의 장소·목적을 입력하세요.' if ready else '기존 출장 확인 완료. '+summary['message']+' · 날짜·시간 선택을 확인하세요.')
             if existing!=review['existing']:raise ValueError('기존 출장 내역이 바뀌었습니다. 다시 조회하세요.')
             with app.file_lock('state'):
@@ -335,7 +349,7 @@ def run_job(app,job):
                 app.log_event(f'{key} 출장 등록 확인 완료')
             trips.phase='최종 출장 내역 합산 확인'
             final=trips.existing(month)
-            final_amount=sum(v['amount'] for v in existing_totals(final).values())
+            final_amount=sum(v['amount'] for v in center_totals(final).values())
             summary=summarize([],job['total'],final_amount)
             return dict(ok=True,rows=chosen,all_rows=make_rows(attendance,rules,final,date.today()),summary=summary,message=f'출장 {len(submitted)}일 등록·수정·삭제 정리 확인 완료. '+summary['message'])
         except Exception as error:
