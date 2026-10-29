@@ -1,7 +1,7 @@
 """Fill the supplied expense form without rewriting its styles or print package.
 
-The blank template is authored/verified at build time. Runtime uses only the
-Python standard library, preserving template XML parts and printer settings.
+The blank template is authored/verified at build time. XLSX XML editing uses the
+standard library; workday dates use the application's existing holiday calendar.
 """
 import calendar
 import base64
@@ -11,7 +11,7 @@ import os
 import re
 import tempfile
 import xml.etree.ElementTree as ET
-from datetime import date
+from datetime import date,timedelta
 from pathlib import Path
 from zipfile import ZipFile,ZIP_DEFLATED
 
@@ -42,6 +42,18 @@ def month_date(month):
 def export_filename(month):
     d=month_date(month)
     return f'{d.year} 출장비지급내역({d.month}월)_.xlsx'
+
+def report_workday(month,vacation_days=(),workday=None):
+    first=month_date(month);day=first.replace(day=calendar.monthrange(first.year,first.month)[1])
+    if workday is None:
+        import holidays
+        calendar_days=holidays.country_holidays('KR',years=[first.year])
+        workday=lambda value:value not in calendar_days
+    vacations={str(value) for value in vacation_days}
+    while day>=first:
+        if day.weekday()<5 and str(day) not in vacations and workday(day):return day
+        day-=timedelta(days=1)
+    raise ValueError('선택 월에 작성일로 사용할 평일이 없습니다. 휴가 설정을 확인하세요.')
 
 def clock(text):
     if not isinstance(text,str) or not re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d',text):raise ValueError('출장 시각을 HH:MM으로 확인하세요.')
@@ -108,8 +120,9 @@ def prepare_local_parts(parts):
         parts['docProps/core.xml']=xml(core)
     return parts
 
-def export_records(records,month,output_path,name,position='',template=TEMPLATE):
+def export_records(records,month,output_path,name,position='',template=TEMPLATE,*,vacation_days=(),workday=None):
     first=month_date(month);last=first.replace(day=calendar.monthrange(first.year,first.month)[1])
+    written_on=report_workday(month,vacation_days,workday)
     name=str(name or '').strip();position=str(position or '').strip()
     if not name:raise ValueError('엑셀 문서에 표시할 성명을 입력하세요.')
     if len(name)>30 or len(position)>30:raise ValueError('성명·직위는 각각 30자 이내로 입력하세요.')
@@ -160,7 +173,7 @@ def export_records(records,month,output_path,name,position='',template=TEMPLATE)
             for view in root.findall('s:sheetViews/s:sheetView',NS):view.set('tabSelected','0')
         else:original_sheet.set('name',title)
         ET.SubElement(names,f'{{{S}}}definedName',name='_xlnm.Print_Area',localSheetId=str(i)).text=f"'{title}'!$A$1:$L$35"
-        cell(root,'A5',f'작성일 : {last.year}년  {last.month}월  {last.day}일')
+        cell(root,'A5',f'작성일 : {written_on.year}년  {written_on.month}월  {written_on.day}일')
         cell(root,'A9','편의센터');cell(root,'J9','현장점검 및 협의 등')
         cell(root,'B9',position);cell(root,'D9',name)
         cell(root,'E9',f'{first:%Y.%m.%d}.~ {last:%Y.%m.%d}.')
@@ -205,7 +218,7 @@ def export_records(records,month,output_path,name,position='',template=TEMPLATE)
         os.replace(tmp,path)
     finally:
         if os.path.exists(tmp):os.remove(tmp)
-    return dict(export_path=str(path),center_count=len(included),excluded_count=excluded,total_amount=sum(x['amount'] for x in included),sheet_count=count)
+    return dict(export_path=str(path),center_count=len(included),excluded_count=excluded,total_amount=sum(x['amount'] for x in included),sheet_count=count,written_on=str(written_on))
 
 def export_site_records(app,job):
     from monthly_reconcile import _settings,_connect
@@ -216,9 +229,12 @@ def export_site_records(app,job):
     template=TEMPLATE
     if template is None or not Path(template).is_file():raise ValueError('내장 엑셀 양식이 없습니다. 프로그램을 최신 버전으로 업데이트하세요.')
     with app.file_lock('action',timeout=120):
+        with app.file_lock('state'):
+            state=app.load_json(app.STATE_FILE,{})
+        vacations=[key for key,rule in state.get('day_rules',{}).items() if rule.get('vacation')]
         driver,_=_connect(app,_settings(app))
         try:
             page=TripPage(driver);page.open();records=page.existing(month)
         finally:driver.quit()
-    result=export_records(records,month,job['output_path'],job['name'],job.get('position',''),template=template)
-    return dict(ok=True,**result,message=f"센터 출장 {result['center_count']}건 내보내기 완료 · 협회 등 {result['excluded_count']}건 제외 · {result['total_amount']:,}원\n{result['export_path']}")
+    result=export_records(records,month,job['output_path'],job['name'],job.get('position',''),template=template,vacation_days=vacations,workday=getattr(app,'is_workday',None))
+    return dict(ok=True,**result,message=f"센터 출장 {result['center_count']}건 내보내기 완료 · 협회 등 {result['excluded_count']}건 제외 · {result['total_amount']:,}원 · 작성일 {result['written_on']}\n{result['export_path']}")

@@ -20,8 +20,28 @@ class ExpenseExport(unittest.TestCase):
         self.temp=tempfile.TemporaryDirectory();self.path=Path(self.temp.name)/export.export_filename('2026-10')
         self.fixture=patch.object(export,'TEMPLATE',ROOT/'app/trip-expenses-template.txt');self.fixture.start()
     def tearDown(self):self.fixture.stop();self.temp.cleanup()
+    def test_written_date_skips_weekends_holidays_and_saved_vacations(self):
+        workday=lambda day:day!=date(2026,10,29)
+        self.assertEqual(export.report_workday('2026-10',['2026-10-30'],workday),date(2026,10,28))
+        self.assertEqual(export.report_workday('2026-11',(),lambda day:True),date(2026,11,30))
+        with self.assertRaisesRegex(ValueError,'작성일로 사용할 평일'):
+            export.report_workday('2026-10',[f'2026-10-{n:02}' for n in range(1,32)],lambda day:True)
+    def test_all_sheets_use_adjusted_written_date_but_full_month_period(self):
+        rows=[record(f'2026-10-{n:02}') for n in range(1,21)]
+        result=export.export_records(rows,'2026-10',self.path,'시험',vacation_days=['2026-10-30'],workday=lambda day:True)
+        self.assertEqual(result['written_on'],'2026-10-29')
+        for sheet in load_workbook(self.path,data_only=True):
+            self.assertEqual(sheet['A5'].value,'작성일 : 2026년  10월  29일')
+            self.assertEqual(sheet['E9'].value,'2026.10.01.~ 2026.10.31.')
+    def test_export_job_uses_local_vacation_settings_for_written_date(self):
+        rules={'2026-10-30':{'vacation':True},'2026-10-29':{'exclude_overtime':True}}
+        app=SimpleNamespace(file_lock=lambda *a,**kw:nullcontext(),STATE_FILE='fixture-state',load_json=lambda *a,**kw:{'day_rules':rules},is_workday=lambda day:True)
+        with patch('monthly_reconcile._settings',return_value={}),patch('monthly_reconcile._connect',return_value=(Mock(),Mock())),patch('trip_site.TripPage') as site:
+            site.return_value.existing.return_value=[record()]
+            result=export.export_site_records(app,dict(month='2026-10',name='시험',output_path=str(self.path)))
+        self.assertEqual(result['written_on'],'2026-10-29')
     def test_export_job_reads_site_history_without_attendance_lookup_or_write(self):
-        app=SimpleNamespace(file_lock=lambda *a,**kw:nullcontext())
+        app=SimpleNamespace(file_lock=lambda *a,**kw:nullcontext(),STATE_FILE='fixture-state',load_json=lambda *a,**kw:{})
         driver=Mock()
         with patch('monthly_reconcile._settings',return_value={}),patch('monthly_reconcile._connect',return_value=(driver,Mock())),patch('monthly_reconcile._read_month') as attendance,patch('trip_site.TripPage') as site:
             site.return_value.existing.return_value=[record(),record('2026-10-02','협회')]
@@ -29,7 +49,7 @@ class ExpenseExport(unittest.TestCase):
             self.assertEqual(result['center_count'],1);self.assertEqual(result['excluded_count'],1)
             attendance.assert_not_called();site.return_value.submit.assert_not_called();driver.quit.assert_called_once()
     def test_export_uses_builtin_even_with_legacy_template_setting(self):
-        app=SimpleNamespace(file_lock=lambda *a,**kw:nullcontext());driver=Mock()
+        app=SimpleNamespace(file_lock=lambda *a,**kw:nullcontext(),STATE_FILE='fixture-state',load_json=lambda *a,**kw:{});driver=Mock()
         with patch('monthly_reconcile._settings',return_value={}),patch('monthly_reconcile._connect',return_value=(driver,Mock())),patch('trip_site.TripPage') as site:
             site.return_value.existing.return_value=[record()]
             result=trips.run_job(app,dict(operation='export',month='2026-10',name='시험',output_path=str(self.path),template_path='missing-old-local-file.xlsx'))
