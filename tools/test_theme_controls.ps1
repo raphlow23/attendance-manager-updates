@@ -19,6 +19,7 @@ $c=New-Object Windows.Forms.ComboBox;$c.Location=New-Object Drawing.Point(25,125
 $b=New-Object Windows.Forms.Button;$b.Location=New-Object Drawing.Point(25,180);$b.Text='메뉴';$f.Controls.Add($b)
 $g=New-Object Windows.Forms.DataGridView;$g.Location=New-Object Drawing.Point(250,25);$g.Width=280;[void]$g.Columns.Add('weekday','요일');[void]$g.Columns.Add('hours','인정시간');$f.Controls.Add($g)
 Set-UiTheme $f
+foreach($column in $g.Columns){$column.Width=220}
 try{
  $f.Show();[Windows.Forms.Application]::DoEvents()
  foreach($input in @($n,$d,$c)){if([WorkdaySoftTheme]::InputSkinCount($input) -lt 1){throw ('Native arrow decoration missing: '+$input.GetType().Name)}}
@@ -39,5 +40,13 @@ try{
  [WorkdaySoftTheme]::SetSelected($b,$false);if([WorkdaySoftTheme]::IsPressed($b)){throw 'Menu inset selection does not clear'}
  if($g.ColumnHeadersDefaultCellStyle.Alignment -ne 'MiddleCenter' -or $g.ColumnHeadersDefaultCellStyle.WrapMode -ne 'False'){throw 'Header alignment or wrapping mismatch'}
  foreach($column in $g.Columns){if($column.Width -lt [Windows.Forms.TextRenderer]::MeasureText($column.HeaderText,$g.Font).Width+22){throw 'Short header can wrap or clip'}}
- Write-Output 'THEME_CONTROLS_OK: real numeric/time arrow clicks, ComboBox keyboard, selected inset, centered nonwrapping headers; no site or account actions'
+ $scroll=@($g.Controls|Where-Object{$_ -is [Windows.Forms.HScrollBar] -and $_.Visible})[0]
+ if(-not $scroll){throw 'Horizontal scroll fixture not visible'}
+ if([WorkdaySoftTheme]::GridSkinCount($g) -lt 1){throw 'Native scrollbar skin not bound'}
+ $old=$g.HorizontalScrollingOffset
+ [void][ThemeInputProbe]::SendMessage($g.Handle,0x114,[IntPtr]1,$scroll.Handle)
+ [Windows.Forms.Application]::DoEvents()
+ if($g.HorizontalScrollingOffset -le $old){throw 'Styled scrollbar no longer moves grid'}
+ if($g.BorderStyle -ne 'None' -or $g.ColumnHeadersBorderStyle -ne 'None'){throw 'Grid border remains'}
+ Write-Output 'THEME_CONTROLS_OK: borderless grid and native horizontal scroll; real numeric/time arrow clicks, ComboBox keyboard, selected inset, centered nonwrapping headers; no site or account actions'
 }finally{$f.Close();$f.Dispose()}

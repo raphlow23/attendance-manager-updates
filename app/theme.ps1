@@ -126,7 +126,7 @@ public static class WorkdaySoftTheme {
    using(var wash=new LinearGradientBrush(r,Color.FromArgb(Math.Min(255,white+30),255,255,255),Color.FromArgb(white,247,250,255),100f))g.FillPath(wash,p);
    using(var sheen=new LinearGradientBrush(new RectangleF(r.X,r.Y,r.Width,Math.Max(2,r.Height*.34f)),Color.FromArgb(36,255,255,255),Color.FromArgb(0,255,255,255),90f))g.FillRectangle(sheen,r.X,r.Y,r.Width,r.Height*.34f);
    g.Restore(state);g.SmoothingMode=SmoothingMode.AntiAlias;
-   using(var rim=new Pen(Color.FromArgb(210,255,255,255),1))g.DrawPath(rim,p);
+
   }
  }
  public static void SurfacePaint(Graphics g,RectangleF r,float radius,Color color,bool raised){
@@ -135,29 +135,29 @@ public static class WorkdaySoftTheme {
   using(var p=Round(r,radius))using(var brush=new LinearGradientBrush(r,Mix(color,Color.White,dark?.07f:.35f),dark?Mix(color,Ink,.22f):Mix(color,Surface,.1f),95f)){
    g.FillPath(brush,p);var state=g.Save();g.SetClip(p,CombineMode.Intersect);
    using(var light=new LinearGradientBrush(new RectangleF(r.X,r.Y,r.Width,Math.Max(2,r.Height*.42f)),Color.FromArgb(dark?24:70,255,255,255),Color.FromArgb(0,255,255,255),90f))g.FillRectangle(light,r.X,r.Y,r.Width,r.Height*.42f);
-   g.Restore(state);using(var edge=new Pen(Color.FromArgb(dark?145:220,255,255,255),1))g.DrawPath(edge,p);
+   g.Restore(state);
   }
  }
  public static void Inset(Graphics g,RectangleF r,float radius,Color color){
   SurfacePaint(g,r,radius,Mix(color,Ink,color.GetBrightness()<.64f?.08f:.045f),false);
-  using(var p=Round(RectangleF.Inflate(r,-1,-1),Math.Max(2,radius-1)))using(var pen=new Pen(Color.FromArgb(45,67,94,122),1.5f))g.DrawPath(pen,p);
+
  }
  class ButtonState{public ButtonState(){} public bool Down,Hover,Selected;}
  static ConditionalWeakTable<Button,ButtonState> Buttons=new ConditionalWeakTable<Button,ButtonState>();
  public static bool IsPressed(Button b){ButtonState state;return Buttons.TryGetValue(b,out state)&&(state.Down||state.Selected);}
  public static void SetSelected(Button b,bool selected){var state=Buttons.GetOrCreateValue(b);state.Selected=selected;b.Invalidate();if(b.Parent!=null)b.Parent.Invalidate(Rectangle.Inflate(b.Bounds,8,8));}
  public static void ButtonPaint(Graphics g,Rectangle r,Button b,bool pressed,bool hover){
-  RectangleF face=new RectangleF(r.X+1,r.Y+1,r.Width-3,r.Height-3);Color fill=b.Enabled?b.BackColor:Surface;
-  if(pressed)fill=Mix(fill,Ink,.10f);else if(hover)fill=Mix(fill,Color.White,.10f);
-  if(pressed||IsPressed(b))Inset(g,face,Math.Max(2,(r.Height-3)/2f),fill);else if(fill.GetBrightness()>.64f)Glass(g,b,face,Math.Max(2,(r.Height-3)/2f),false,180);else SurfacePaint(g,face,Math.Max(2,(r.Height-3)/2f),fill,false);
+  DrawScene(g,b);RectangleF face=new RectangleF(r.X,r.Y,r.Width,r.Height);Color fill=b.Enabled?b.BackColor:Surface;
+  if(pressed)fill=Mix(fill,Ink,.10f);else if(b.Focused)fill=Mix(fill,Color.White,.15f);else if(hover)fill=Mix(fill,Color.White,.10f);
+  if(pressed||IsPressed(b))Inset(g,face,Math.Min(10,(r.Height-3)/2f),fill);else if(fill.GetBrightness()>.64f)Glass(g,b,face,Math.Min(10,(r.Height-3)/2f),false,180);else SurfacePaint(g,face,Math.Min(10,(r.Height-3)/2f),fill,false);
   Color text=!b.Enabled?Color.FromArgb(126,139,148):(fill.GetBrightness()>.64f?Ink:Color.White);
   Rectangle content=Rectangle.Inflate(r,-5,-2);if(pressed)content.Offset(1,1);
   TextRenderer.DrawText(g,b.Text,b.Font,content,text,TextFormatFlags.HorizontalCenter|TextFormatFlags.VerticalCenter|TextFormatFlags.SingleLine|TextFormatFlags.EndEllipsis);
-  if(b.Focused)using(var p=Round(RectangleF.Inflate(face,-3,-3),10))using(var pen=new Pen(Color.FromArgb(100,80,112,136),1)){pen.DashStyle=DashStyle.Dot;g.DrawPath(pen,p);}
+  // Keyboard focus is a soft fill change, without a second outline.
  }
  public static void PreviewButton(Graphics g,RectangleF r,Button b){
   Color fill=b.Enabled?b.BackColor:Surface;
-  var face=new RectangleF(r.X+1,r.Y+1,r.Width-3,r.Height-3);if(IsPressed(b))Inset(g,face,Math.Max(2,(r.Height-3)/2f),fill);else if(fill.GetBrightness()>.64f)Glass(g,b.FindForm(),face,Math.Max(2,(r.Height-3)/2f),false,180);else SurfacePaint(g,face,Math.Max(2,(r.Height-3)/2f),fill,false);
+  var face=r;if(IsPressed(b))Inset(g,face,Math.Min(10,(r.Height-3)/2f),fill);else if(fill.GetBrightness()>.64f)Glass(g,b.FindForm(),face,Math.Min(10,(r.Height-3)/2f),false,180);else SurfacePaint(g,face,Math.Min(10,(r.Height-3)/2f),fill,false);
   Color text=!b.Enabled?Color.FromArgb(126,139,148):(fill.GetBrightness()>.64f?Ink:Color.White);
   using(var brush=new SolidBrush(text))using(var format=new StringFormat()){format.Alignment=StringAlignment.Center;format.LineAlignment=StringAlignment.Center;g.DrawString(b.Text,b.Font,brush,RectangleF.Inflate(r,-5,-2),format);}
  }
@@ -166,7 +166,7 @@ public static class WorkdaySoftTheme {
   b.Paint+=(s,e)=>ButtonPaint(e.Graphics,b.ClientRectangle,b,state.Down,state.Hover);
   b.MouseEnter+=(s,e)=>{state.Hover=true;b.Invalidate();};b.MouseLeave+=(s,e)=>{state.Hover=false;state.Down=false;b.Invalidate();if(b.Parent!=null)b.Parent.Invalidate(Rectangle.Inflate(b.Bounds,8,8));};b.MouseDown+=(s,e)=>{state.Down=true;b.Invalidate();if(b.Parent!=null)b.Parent.Invalidate(Rectangle.Inflate(b.Bounds,8,8));};b.MouseUp+=(s,e)=>{state.Down=false;b.Invalidate();if(b.Parent!=null)b.Parent.Invalidate(Rectangle.Inflate(b.Bounds,8,8));};
   b.EnabledChanged+=(s,e)=>b.Invalidate();b.GotFocus+=(s,e)=>b.Invalidate();b.LostFocus+=(s,e)=>b.Invalidate();
-  EventHandler size=(s,e)=>{var old=b.Region;using(var p=Round(new RectangleF(0,0,b.Width,b.Height),Math.Max(2,(b.Height-1)/2f)))b.Region=new Region(p);if(old!=null)old.Dispose();};size(b,EventArgs.Empty);b.SizeChanged+=size;
+  EventHandler size=(s,e)=>{var old=b.Region;using(var p=Round(new RectangleF(0,0,b.Width,b.Height),Math.Min(10,(b.Height-1)/2f)))b.Region=new Region(p);if(old!=null)old.Dispose();};size(b,EventArgs.Empty);b.SizeChanged+=size;
  }
  [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern IntPtr FindWindowEx(IntPtr parent,IntPtr after,string name,string text);
  [DllImport("user32.dll")] static extern bool GetClientRect(IntPtr hwnd,out NativeRect r);
@@ -210,8 +210,12 @@ public static class WorkdaySoftTheme {
    else if(owner is NumericUpDown)foreach(Control child in owner.Controls)if(!(child is TextBox)&&child.IsHandleCreated)Add(child.Handle,false);
   }
  }
+ [DllImport("user32.dll",EntryPoint="GetWindowLongW")] static extern int GetStyle(IntPtr hwnd,int index);
+ [DllImport("user32.dll",EntryPoint="SetWindowLongW")] static extern int SetStyle(IntPtr hwnd,int index,int value);
+ [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr hwnd,IntPtr after,int x,int y,int w,int h,int flags);
+ static void RemoveEditorFrame(Control c){if(!c.IsHandleCreated)return;SetStyle(c.Handle,-16,GetStyle(c.Handle,-16)&~0x800000);SetStyle(c.Handle,-20,GetStyle(c.Handle,-20)&~0x200);SetWindowPos(c.Handle,IntPtr.Zero,0,0,0,0,0x37);}
  public static void Input(Control input){
-  InputDecoration prior;if(Inputs.TryGetValue(input,out prior))return;Inputs.GetValue(input,c=>new InputDecoration(c));
+  InputDecoration prior;if(Inputs.TryGetValue(input,out prior))return;input.HandleCreated+=(s,e)=>RemoveEditorFrame(input);RemoveEditorFrame(input);Inputs.GetValue(input,c=>new InputDecoration(c));
   var combo=input as ComboBox;
   if(combo!=null){combo.DrawMode=DrawMode.OwnerDrawFixed;combo.ItemHeight=23;combo.DropDownHeight=220;
    combo.DrawItem+=(s,e)=>{if(e.Index<0)return;bool selected=(e.State&DrawItemState.Selected)!=0;using(var bg=new SolidBrush(selected?Color.FromArgb(221,231,239):Color.FromArgb(247,249,250)))e.Graphics.FillRectangle(bg,e.Bounds);
@@ -221,6 +225,29 @@ public static class WorkdaySoftTheme {
    };
   }
  }
+ class ScrollWindow:NativeWindow {
+  ScrollBar bar;
+  public ScrollWindow(ScrollBar value){bar=value;AssignHandle(value.Handle);}
+  protected override void WndProc(ref Message m){base.WndProc(ref m);if(m.Msg!=0xF&&m.Msg!=0x317&&m.Msg!=0x318)return;if(Handle==IntPtr.Zero||bar.IsDisposed)return;
+   try{using(var g=(m.Msg==0x317||m.Msg==0x318)&&m.WParam!=IntPtr.Zero?Graphics.FromHdc(m.WParam):Graphics.FromHwnd(Handle)){
+    bool horizontal=bar is HScrollBar;int length=horizontal?bar.ClientSize.Width:bar.ClientSize.Height,cross=horizontal?bar.ClientSize.Height:bar.ClientSize.Width;
+    int arrow=horizontal?SystemInformation.HorizontalScrollBarArrowWidth:SystemInformation.VerticalScrollBarArrowHeight;
+    g.Clear(Color.FromArgb(243,247,250));int track=Math.Max(1,length-arrow*2);int range=Math.Max(1,bar.Maximum-bar.Minimum+1);
+    int thumb=Math.Min(track,Math.Max(20,(int)((double)track*bar.LargeChange/range)));int travel=track-thumb;int max=Math.Max(1,bar.Maximum-bar.Minimum-bar.LargeChange+1);
+    int pos=arrow+(int)((double)travel*(bar.Value-bar.Minimum)/max);RectangleF rect=horizontal?new RectangleF(pos,(cross-6)/2f,thumb,6):new RectangleF((cross-6)/2f,pos,6,thumb);
+    using(var p=Round(rect,3))using(var b=new SolidBrush(Color.FromArgb(105,155,164)))g.FillPath(b,p);
+    using(var pen=new Pen(Color.FromArgb(99,129,145),1.3f)){g.SmoothingMode=SmoothingMode.AntiAlias;float mid=cross/2f;for(int i=0;i<2;i++){float at=i==0?arrow/2f:length-arrow/2f;float dir=i==0?-1:1;if(horizontal)g.DrawLines(pen,new PointF[]{new PointF(at-dir*2,mid-3),new PointF(at+dir*1,mid),new PointF(at-dir*2,mid+3)});else g.DrawLines(pen,new PointF[]{new PointF(mid-3,at-dir*2),new PointF(mid,at+dir*1),new PointF(mid+3,at-dir*2)});}}
+   }}catch(ObjectDisposedException){}catch(ArgumentException){}catch(ExternalException){}
+  }
+ }
+ class ScrollDecoration {
+  public int Count{get{return windows.Count;}}
+  List<ScrollWindow> windows=new List<ScrollWindow>();HashSet<IntPtr> handles=new HashSet<IntPtr>();
+  public ScrollDecoration(DataGridView grid){Action bind=()=>{foreach(Control c in grid.Controls){var bar=c as ScrollBar;if(bar!=null&&bar.IsHandleCreated&&handles.Add(bar.Handle)){var handle=bar.Handle;var window=new ScrollWindow(bar);windows.Add(window);bar.HandleDestroyed+=(s,e)=>{handles.Remove(handle);if(window.Handle!=IntPtr.Zero)window.ReleaseHandle();};}}};foreach(Control child in grid.Controls){if(child is ScrollBar){child.HandleCreated+=(s,e)=>bind();child.VisibleChanged+=(s,e)=>bind();}}grid.ControlAdded+=(s,e)=>{if(e.Control is ScrollBar){e.Control.HandleCreated+=(a,b)=>bind();e.Control.VisibleChanged+=(a,b)=>bind();}bind();};grid.Layout+=(s,e)=>bind();grid.HandleCreated+=(s,e)=>bind();grid.Disposed+=(s,e)=>{foreach(var w in windows)if(w.Handle!=IntPtr.Zero)w.ReleaseHandle();windows.Clear();};bind();}
+ }
+ static ConditionalWeakTable<DataGridView,ScrollDecoration> Grids=new ConditionalWeakTable<DataGridView,ScrollDecoration>();
+ public static int GridSkinCount(DataGridView grid){ScrollDecoration d;return Grids.TryGetValue(grid,out d)?d.Count:0;}
+ public static void Grid(DataGridView grid){Grids.GetValue(grid,g=>new ScrollDecoration(g));}
  public static void Group(GroupBox group){
   string caption=group.Text;group.Text="";
   var label=new Label{Text=caption,TextAlign=ContentAlignment.MiddleCenter,AutoSize=false,BackColor=Color.Transparent,ForeColor=Ink,Location=new Point(10,5),Size=new Size(group.Width-20,24),Anchor=AnchorStyles.Top|AnchorStyles.Left|AnchorStyles.Right};group.Controls.Add(label);
@@ -238,8 +265,9 @@ public static class WorkdaySoftTheme {
     if(!OwnVisible(c))continue;
     if(c is TextBoxBase||c is ComboBox||c is NumericUpDown||c is DateTimePicker){RectangleF field=new RectangleF(c.Left-3,c.Top-4,c.Width+6,c.Height+8);Glass(e.Graphics,parent,field,10,false,238);continue;}
     RectangleF r=new RectangleF(c.Left,c.Top,c.Width,c.Height);
-    if(c is Button){if(!IsPressed((Button)c))Shadow(e.Graphics,r,Math.Max(2,(c.Height-1)/2f));continue;}
-    if(c is Panel||c is GroupBox||c is DataGridView){r.Inflate(3,3);Glass(e.Graphics,parent,r,20,true,c is DataGridView?230:150);}
+    if(c is Button){if(!IsPressed((Button)c))Shadow(e.Graphics,r,Math.Min(10,(c.Height-1)/2f));continue;}
+    // Each card paints its own surface. Do not draw a second frame behind it.
+    // Grids keep their own rectangular opaque surface, with no protruding halo.
    }
   };
  }
@@ -268,6 +296,7 @@ function Set-UiTheme($Window) {
     $control.ColumnHeadersDefaultCellStyle.Alignment='MiddleCenter';$control.ColumnHeadersDefaultCellStyle.WrapMode='False';$control.DefaultCellStyle.Alignment='MiddleCenter';$control.DefaultCellStyle.WrapMode='False';
     foreach($column in $control.Columns){$column.HeaderText=($column.HeaderText -replace '\s+',' ').Trim();$column.HeaderCell.Style.Alignment='MiddleCenter';$column.DefaultCellStyle.Alignment='MiddleCenter';$width=[Windows.Forms.TextRenderer]::MeasureText($column.HeaderText,$control.Font).Width+22;$column.MinimumWidth=[Math]::Max($column.MinimumWidth,$width)}
     $control.Add_EditingControlShowing({param($sender,$args) if($args.Control -is [Windows.Forms.ComboBox]){[WorkdaySoftTheme]::Input($args.Control)}})
+    $control.ColumnHeadersBorderStyle='None';$control.RowHeadersBorderStyle='None';$control.CellBorderStyle='SingleHorizontal';[WorkdaySoftTheme]::Grid($control)
     $control.ColumnHeadersHeight=42;$control.DefaultCellStyle.BackColor=[Drawing.ColorTranslator]::FromHtml('#FFFFFF');$control.DefaultCellStyle.ForeColor=$script:UiInk
     $control.DefaultCellStyle.SelectionBackColor=[Drawing.ColorTranslator]::FromHtml('#C8DAE4');$control.DefaultCellStyle.SelectionForeColor=$script:UiInk
     $control.AlternatingRowsDefaultCellStyle.BackColor=[Drawing.ColorTranslator]::FromHtml('#F3F6FC');$control.GridColor=[Drawing.ColorTranslator]::FromHtml('#E5EAF3')

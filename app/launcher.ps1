@@ -99,6 +99,7 @@ foreach ($card in @(@(20, '01', '근태 자동관리', "예약 출퇴근 등록`
 }
 . (Join-Path $PSScriptRoot 'theme.ps1')
 Set-UiTheme $form
+$attendance.BackColor = $script:UiCyan
 $overtime.BackColor = $script:UiOrange
 $security.BackColor = $script:UiCyan
 $health.BackColor = $script:UiCyan
