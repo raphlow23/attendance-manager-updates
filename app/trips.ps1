@@ -128,7 +128,7 @@ foreach($name in @('selected','date','start_hour','start_minute','end')){$grid.C
 $summary=Text-Label '목표 금액을 입력하고 출퇴근 일정을 조회하세요.' 20 540 1190;$summary.Height=58;$summary.Anchor='Bottom,Left,Right'
 $status=Text-Label '설정을 저장하거나 메뉴를 여는 것만으로 사이트에 접속하지 않습니다.' 20 650 1190;$status.Height=45;$status.Anchor='Bottom,Left,Right'
 $allocate=Make-Button '선택일 시간 배분' 20 600 230;$allocate.Anchor='Bottom,Left'
-$complete=Make-Button '선택 완료 → 기존 출장 확인' 270 600 330;$complete.Anchor='Bottom,Left'
+$complete=Make-Button '출장 수정 및 작성' 270 600 330;$complete.Anchor='Bottom,Left'
 $back=Make-Button '일정 다시 선택' 20 600 230;$back.Anchor='Bottom,Left';$back.Visible=$false
 $submit=Make-Button '선택 내역 정리 (등록·수정·삭제)' 855 600 355;$submit.Anchor='Bottom,Right';$submit.Visible=$false
 $timer=New-Object Windows.Forms.Timer;$timer.Interval=400
@@ -187,7 +187,7 @@ function Render-Rows($rows){
 }
 function Change-Stage($stage){
  $script:stage=$stage;$details=($stage -eq 2);$grid.PurposeEntryMode=$details
- $grid.Columns['delete'].Visible=-not $details;$grid.Columns['location'].Visible=$details;$grid.Columns['purpose'].Visible=$details;$grid.Columns['attendance'].Visible=-not $details
+ $grid.Columns['amount'].Visible=-not $details;$grid.Columns['delete'].Visible=-not $details;$grid.Columns['location'].Visible=$details;$grid.Columns['purpose'].Visible=$details;$grid.Columns['attendance'].Visible=-not $details
  $complete.Visible=-not $details;$allocate.Visible=-not $details;$back.Visible=$details;$submit.Visible=$details;$total.Enabled=-not $details;$month.Enabled=-not $details
  $heading.Text=if($details){'2. 장소·목적 입력 — 기존 출장은 수정하고, 신규 날짜는 추가 등록합니다.'}else{'1. 날짜·시간 선택 → 2. 선택한 날짜의 출장 장소·목적 입력 → 날짜별 등록'}
  $status.Text=if($details){'Tab·Enter: 장소 → 목적 → 다음 행 장소 / Shift: 역방향 · 체크 해제·목적 미입력은 등록 제외'}else{'금액이 차면 추가 체크를 막습니다. 선택을 해제하거나 시간을 줄이면 다시 선택할 수 있습니다.'}
