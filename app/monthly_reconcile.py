@@ -82,7 +82,7 @@ def resolve_holds(app, rows, today):
                     if parse_time(value):
                         day=date.fromisoformat(key);hour,minute=parse_time(value)
                         state.setdefault('runs',{}).setdefault(key,{}).setdefault('checkout',{})['target']=datetime.combine(day,datetime.min.time()).replace(hour=hour,minute=minute).isoformat(timespec='minutes')
-            # The user explicitly defines this rule as 09:00--18:00. It can be
+            # The user explicitly defines this rule as 09:00--18:05. It can be
             # safely re-applied from a fresh snapshot even after a legacy hold.
             known=all(parse_time(row[k]) or is_blank_time(row[k]) for k in ('checkin','checkout'))
             present=any(parse_time(row[k]) for k in ('checkin','checkout'))
@@ -129,7 +129,7 @@ def build_plan(rows, rules, settings, today, is_workday, rng=None, saved_targets
         if rule.get('vacation'):
             # Explicit request: vacation records before 19:00 stay untouched.
             if co and co >= (19, 0) and ci and ci < (18, 0):
-                changes[key] = dict(date=key, before={k: row[k] for k in FIELDS}, after={'checkout': '18:00'}, reason='휴가일 연장 기록 정리')
+                changes[key] = dict(date=key, before={k: row[k] for k in FIELDS}, after={'checkout': '18:05'}, reason='휴가일 연장 기록 정리')
             elif co and co >= (19, 0):
                 skipped.append(key)
             continue
@@ -138,10 +138,10 @@ def build_plan(rows, rules, settings, today, is_workday, rng=None, saved_targets
             if not known or (day==today and (ci is None or co is None)):
                 skipped.append(key)
                 continue
-            after = {'checkin': '09:00', 'checkout': '18:00'}
+            after = {'checkin': '09:00', 'checkout': '18:05'}
             changed = {k: v for k, v in after.items() if parse_time(row[k]) != parse_time(v)}
             if changed:
-                changes[key] = dict(date=key, before={k: row[k] for k in FIELDS}, after=changed, reason='연장 제외일 09:00~18:00')
+                changes[key] = dict(date=key, before={k: row[k] for k in FIELDS}, after=changed, reason='연장 제외일 09:00~18:05')
             continue
         if not ci or (co and ci>=co):
             skipped.append(key)
@@ -156,15 +156,15 @@ def build_plan(rows, rules, settings, today, is_workday, rng=None, saved_targets
                 try:
                     saved=datetime.fromisoformat(saved)
                     if saved.date()==day and (saved.hour,saved.minute)>ci:
-                        candidate=saved.hour*60+saved.minute
+                        candidate=max(saved.hour*60+saved.minute,1085)
                 except (ValueError,TypeError):
                     pass
             if candidate is None:
-                start=parse_time(settings.get('checkout_start','18:00'))
+                start=parse_time(settings.get('checkout_start','18:05'))
                 end=parse_time(settings.get('checkout_end','18:55'))
                 if not start or not end:
                     raise ValueError('일반 퇴근 시간 범위를 확인하세요.')
-                choices=[m for m in range(start[0]*60+start[1],end[0]*60+end[1]+1,step) if m>ci[0]*60+ci[1] and m<19*60]
+                choices=[m for m in range(max(start[0]*60+start[1],1085),max(end[0]*60+end[1],1085)+1,step) if m>ci[0]*60+ci[1] and m<19*60]
                 if not choices:
                     skipped.append(key)
                     continue
@@ -183,7 +183,12 @@ def build_plan(rows, rules, settings, today, is_workday, rng=None, saved_targets
             skipped.append(row['date'])
             keep.append(row)
             continue
-        changes[row['date']] = dict(date=row['date'], before={k: row[k] for k in FIELDS}, after={'checkout': '18:00'}, reason='월 연장일 초과 정리')
+        changes[row['date']] = dict(date=row['date'], before={k: row[k] for k in FIELDS}, after={'checkout': '18:05'}, reason='월 연장일 초과 정리')
+    if daily==2:
+        for row in keep:
+            if parse_time(row['checkout'])[0]==19:
+                minute=rng.choice(list(range(0,56,step)))
+                changes[row['date']]=dict(date=row['date'],before={k:row[k] for k in FIELDS},after={'checkout':f'20:{minute:02}'},reason='하루 2시간 연장 범위 보정')
     needed = max(0, target - len(keep))
     selected = normal[:needed]
     for row in selected:
@@ -193,12 +198,12 @@ def build_plan(rows, rules, settings, today, is_workday, rng=None, saved_targets
             try:
                 value=datetime.fromisoformat(saved)
                 candidate=value.hour*60+value.minute
-                if str(value.date())==row['date'] and 19*60<=candidate<=(19 if daily==1 else 20)*60+55 and candidate%(step)==0:
+                if str(value.date())==row['date'] and (18+daily)*60<=candidate<=(18+daily)*60+55 and candidate%(step)==0:
                     minutes=candidate
             except (ValueError,TypeError):
                 pass
         if minutes is None:
-            minutes = rng.choice(list(range(19*60, (19 if daily == 1 else 20)*60+56, step)))
+            minutes = rng.choice(list(range((18+daily)*60, (18+daily)*60+56, step)))
         changes[row['date']] = dict(date=row['date'], before={k: row[k] for k in FIELDS},
             after={'checkout': f'{minutes//60:02}:{minutes%60:02}'}, reason='월 연장일 부족 보완')
     return dict(changes=list(changes.values()), target_days=target,

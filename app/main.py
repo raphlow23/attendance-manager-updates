@@ -156,8 +156,11 @@ def time_settings(settings):
         return hour * 60 + minute
     start_in = minutes('checkin_start', '08:30')
     end_in = minutes('checkin_end', '08:55')
-    start_out = minutes('checkout_start', '18:00')
+    start_out = minutes('checkout_start', '18:05')
+    if end_in >= start_out:raise ValueError('출근 종료보다 퇴근 시작이 늦어야 합니다.')
+    start_out = max(start_out,18*60+5)
     end_out = minutes('checkout_end', '18:55')
+    if end_out == 18*60:end_out=18*60+5
     step = settings.get('time_step_minutes', 5)
     if type(step) is not int or step not in (1, 5):
         raise ValueError('시간 간격은 1분 또는 5분이어야 합니다.')
@@ -207,6 +210,22 @@ def get_overtime_dates(day, state):
     return set(selected)
 
 
+def refresh_checkout_target(day,state,run):
+    """Apply new bounds only to a not-yet-confirmed saved checkout target."""
+    if not run.get('target'):return
+    target=datetime.fromisoformat(run['target'])
+    daily=state.get('overtime_month_settings',{}).get(day.strftime('%Y-%m'),{}).get('daily_hours',run.get('daily_overtime_hours',1))
+    if (target.hour,target.minute)==(18,0):
+        target=target.replace(minute=5)
+    elif daily==2 and target.hour==19:
+        step=time_settings(load_json(SETTINGS_FILE,{}))[-1]
+        minute=random.SystemRandom().choice(list(range(0,56,step)))
+        target=target.replace(hour=20,minute=minute)
+    else:return
+    run['target']=target.isoformat(timespec='minutes')
+    save_json(STATE_FILE,state)
+
+
 def choose_target(mode, today, state):
     day_key = today.isoformat()
     action_state = state.setdefault("runs", {}).setdefault(day_key, {}).setdefault(mode, {})
@@ -214,6 +233,7 @@ def choose_target(mode, today, state):
         return None, dict(action_state, status='success')
     if action_state.get("status") in {"success", "in_progress", "uncertain"}:
         return None, action_state
+    if mode=='checkout':refresh_checkout_target(today,state,action_state)
     if (mode == 'checkout' and rule_for(state, today).get('exclude_overtime')
             and action_state.get('target') and datetime.fromisoformat(action_state['target']).hour >= 19):
         action_state.pop('target', None)
@@ -228,7 +248,7 @@ def choose_target(mode, today, state):
     else:
         overtime = day_key in get_overtime_dates(today, state)
         daily_hours = state["overtime_month_settings"][today.strftime("%Y-%m")]["daily_hours"]
-        offsets = range(19 * 60, (19 if daily_hours == 1 else 20) * 60 + 56, step) if overtime else range(start_out, end_out + 1, step)
+        offsets = range((18+daily_hours)*60, (18+daily_hours)*60+56, step) if overtime else range(start_out, end_out + 1, step)
         action_state["kind"] = "연장퇴근" if overtime else "일반퇴근"
         if overtime:
             action_state["daily_overtime_hours"] = daily_hours
@@ -308,6 +328,8 @@ def recovery_target(day):
         state = load_json(STATE_FILE, {"runs": {}})
         run = state.setdefault("runs", {}).setdefault(day.isoformat(), {}).setdefault("checkout", {})
         if run.get("target"):
+            # Called only after the site confirms that checkout is missing.
+            refresh_checkout_target(day,state,run)
             return datetime.fromisoformat(run["target"])
         prior_status = run.pop("status", None)
         target, _ = choose_target("checkout", day, state)

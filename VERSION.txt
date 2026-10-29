@@ -1,11 +1,11 @@
 Attendance Manager portable source installer
-Package date: 2026-10-28-r48
+Package date: 2026-10-29-r49
 Runtime: CPython 3.12.10 official embeddable 64-bit package
 Check-in: 08:30-08:55, 5-minute steps
-Checkout: 18:00-18:55, 5-minute steps
+Checkout: 18:05-18:55, 5-minute steps
 Monthly overtime hours: configurable (default 10)
 Daily overtime units: 1 or 2; overtime day count = monthly hours / daily units
-1-hour window: 19:00-19:55; 2-hour window: 19:00-20:55; 5-minute steps
+1-hour window: 19:00-19:55; 2-hour window: 20:00-20:55; 5-minute steps
 Windows user logon: check-in immediately, then wait for the existing checkout target
 Recover missing checkout at the next check-in using the same persisted target
 Check-in at/after 09:00: correct to 08:30-08:50 in 5-minute steps

@@ -150,6 +150,7 @@ function Invoke-OvertimeJob($Job) {
     $script:jobPath = Join-Path $dataRoot ("overtime-job-{0}.json" -f [Guid]::NewGuid().ToString('N'))
     [IO.File]::WriteAllText($script:jobPath, ($Job | ConvertTo-Json -Depth 8), (New-Object Text.UTF8Encoding($false)))
     $script:operation = $Job.operation
+    $script:closeAfterSubmit=$false;$script:expectedSubmitCount=@($Job.rows).Count
     $script:worker = Start-WorkdayHiddenProcess $python "`"$mainScript`" --overtime-job `"$script:jobPath`"" $PSScriptRoot
     $scan.Enabled = $false; $submit.Enabled = $false; $monthPicker.Enabled = $false
     $idBox.Enabled = $false; $pwBox.Enabled = $false; $grid.Enabled = $false
@@ -212,6 +213,7 @@ $timer.Add_Tick({
                     if ($row.Cells['date'].Value -eq $entry.date) { $row.Cells['status'].Value = $entry.status; $row.Cells['choose'].Value = $false }
                 }
             }
+            $script:closeAfterSubmit=Test-WorkdaySubmissionComplete $result $script:expectedSubmitCount
             $statusLabel.Text = '처리 결과를 확인하세요. 목적 변경이나 재처리가 필요하면 날짜를 다시 체크해 신청·수정할 수 있습니다.'
         }
     } catch {
@@ -219,10 +221,11 @@ $timer.Add_Tick({
         [void][Windows.Forms.MessageBox]::Show($_.Exception.Message, '처리 결과', 'OK', 'Error')
     } finally {
         Remove-Item -LiteralPath $script:jobPath,($script:jobPath + '.result.json') -Force -ErrorAction SilentlyContinue
-        $script:worker = $null
+        if($script:worker){$script:worker.Dispose()};$script:worker = $null
         $scan.Enabled = $true; $monthPicker.Enabled = $true; $idBox.Enabled = $true; $pwBox.Enabled = $true; $grid.Enabled = $true
         $submit.Enabled = ($grid.Rows.Count -gt 0 -and $script:scanMonth -eq (Get-SelectedMonth))
     }
+    if($script:closeAfterSubmit){$form.Close()}
 })
 $grid.Add_CellValueChanged({param($sender,$eventArgs)
     if($script:loadingDrafts -or $SelfTest -or $eventArgs.RowIndex -lt 0 -or $eventArgs.ColumnIndex -lt 0){return}
