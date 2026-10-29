@@ -10,8 +10,14 @@ from copy import deepcopy
 from attendance_recovery import parse_time
 
 CATEGORY='센터'
+CATEGORIES=('센터','협회')
 TRANSPORT='대중교통'
 RATE=5000
+
+def trip_category(value=None):
+    value=CATEGORY if value is None else str(value).strip()
+    if value not in CATEGORIES:raise ValueError('출장 구분은 센터 또는 협회를 선택하세요.')
+    return value
 
 
 def money(value):
@@ -76,7 +82,7 @@ def make_rows(attendance,rules,existing,today):
         registered=totals.get(key)
         row=dict(date=key,weekday='월화수목금토일'[date.fromisoformat(key).weekday()],checkin=record.get('checkin',''),checkout=record.get('checkout',''),
                  mandatory=False,event_day=event_day,selected=False,existing_checked=True,blocked=not valid or bool(registered and len(registered['records'])!=1),is_existing=bool(registered),
-                 location='',purpose='',existing_hours=registered['hours'] if registered else 0,existing_amount=registered['amount'] if registered else 0)
+                 category=CATEGORY,location='',purpose='',existing_hours=registered['hours'] if registered else 0,existing_amount=registered['amount'] if registered else 0)
         row['status']=('기존 등록 · 장소·목적 수정 가능' if len(registered['records'])==1 else '같은 날 여러 출장 · 사이트에서 수정 필요') if registered else '선택 가능'
         try:row.update(window(row,4))
         except (ValueError,TypeError):
@@ -85,6 +91,8 @@ def make_rows(attendance,rules,existing,today):
         if registered:
             ordered=sorted(registered['records'],key=lambda item:item['start'])
             row.update(hours=registered['hours'],amount=registered['amount'],start=ordered[0]['start'],end=ordered[-1]['end'],start_hour=minutes(ordered[0]['start'])//60,location=ordered[0].get('location',''),purpose=ordered[0].get('purpose',''),blocked=len(registered['records'])!=1,status='기존 등록 · 장소·목적 수정 가능' if len(registered['records'])==1 else '같은 날 여러 출장 · 사이트에서 수정 필요')
+            row['category']=ordered[0].get('category',CATEGORY)
+            if row['category'] not in CATEGORIES:row.update(blocked=True,status='지원하지 않는 출장 구분 · 사이트에서 확인')
         rows.append(row)
     return rows
 
@@ -132,6 +140,7 @@ def merge_entries(rows,entries,require_details=False):
         selected=bool(entry.get('selected'))
         if row['blocked'] and selected:raise ValueError(f'{key}: {row["status"]}')
         row.update(selected=selected,location=str(entry.get('location','')).strip(),purpose=str(entry.get('purpose','')).strip())
+        row['category']=trip_category(entry.get('category',row.get('category'))) if selected or row.get('category') in CATEGORIES else row.get('category')
         if row.get('is_existing') and not selected:continue
         if row.get('is_existing') and entry.get('hours',row['hours'])!=row['hours']:
             raise ValueError('기존 출장의 인정시간은 유지하고 출발·복귀 및 장소·목적을 수정하세요.')
@@ -176,6 +185,9 @@ def _review(app,job):
 
 def run_job(app,job):
     operation=job.get('operation')
+    if operation=='export':
+        from trip_export import export_site_records
+        return export_site_records(app,job)
     if operation=='allocate':
         _,review=_review(app,job)
         rows=merge_entries(review['rows'],job.get('rows',[]))
@@ -269,7 +281,7 @@ def run_job(app,job):
                 if row.get('is_existing'):
                     expected=[e for e in review['existing'] if e['date']==key]
                     if len(matches)!=1 or matches!=expected:raise ValueError(f'{key}: 기존 출장 내용이 달라져 수정을 중단합니다.')
-                    if all(' '.join(matches[0][field].split())==' '.join(row[field].split()) for field in ('location','purpose','start','end')):
+                    if all(' '.join(str(matches[0].get(field,CATEGORY if field=='category' else '')).split())==' '.join(str(row.get(field,CATEGORY if field=='category' else '')).split()) for field in ('location','purpose','start','end','category')):
                         row['status']='기존 내용 동일 · 유지';submitted.append(key)
                         with app.file_lock('state'):
                             state=app.load_json(app.STATE_FILE,{});state.setdefault('trip_applications',{})[key]=dict(status='success',row=row,source='기존 동일 내용 확인');app.save_json(app.STATE_FILE,state)

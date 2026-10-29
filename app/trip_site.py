@@ -6,7 +6,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import Select,WebDriverWait
 from selenium.common.exceptions import NoAlertPresentException,UnexpectedAlertPresentException,StaleElementReferenceException,TimeoutException
 from attendance_recovery import visible,one,label,input_value
-from business_trips import CATEGORY,TRANSPORT
+from business_trips import CATEGORY,TRANSPORT,trip_category
 
 # Explicit trip entry URL supplied by the user; do not infer it from menu labels.
 TRIP_ENTRY_URL='http://sappd.kr/sappd_g6.php'
@@ -227,12 +227,13 @@ class TripPage:
         if update:
             if any(' '.join(input_value(field).split())!=' '.join(original[key].split()) for field,key in ((place,'location'),(purpose,'purpose'))):raise RuntimeError('수정 화면의 기존 장소·목적이 선택 내역과 다릅니다. 저장하지 않았습니다.')
             if [int(input_value(f)) for f in dates]!=[day.year,day.month,day.day]:raise RuntimeError('수정 화면 출장 날짜가 다릅니다.')
-            if Select(selects[0]).first_selected_option.text.strip()!=CATEGORY or Select(selects[1]).first_selected_option.text.strip()!=TRANSPORT:raise RuntimeError('기존 출장 구분·이동수단을 확인하세요.')
+            if norm(Select(selects[0]).first_selected_option.text)!=norm(original['category']) or Select(selects[1]).first_selected_option.text.strip()!=TRANSPORT:raise RuntimeError('기존 출장 구분·이동수단을 확인하세요.')
             for field,value in zip(selects[2:],(int(original['start'][:2]),int(original['start'][3:]),int(original['end'][:2]),int(original['end'][3:]))):
                 if not re.fullmatch(fr'0*{value}\s*[시분]?',Select(field).first_selected_option.text.strip()):raise RuntimeError('수정 화면 출장 시간이 다릅니다.')
         else:
-            select_text(self.driver,selects[0],CATEGORY);select_text(self.driver,selects[1],TRANSPORT)
+            select_text(self.driver,selects[1],TRANSPORT)
             for element,value in zip(dates,(day.year,day.month,day.day)):set_value(self.driver,element,value)
+        select_text(self.driver,selects[0],trip_category(row.get('category')))
         for element,value in zip(selects[2:],(int(row['start'][:2]),int(row['start'][3:]),int(row['end'][:2]),int(row['end'][3:]))):select_number(self.driver,element,value)
         set_value(self.driver,place,row['location']);set_value(self.driver,purpose,row['purpose'])
         if form.get_attribute('action')!=action:raise RuntimeError('출장 저장 대상이 바뀌었습니다.')
@@ -254,7 +255,7 @@ class TripPage:
             if callable(check):check()
             try:
                 records=self.existing(month)
-                return sum(all(' '.join(item[k].split())==' '.join(row[k].split()) for k in ('date','location','purpose','start','end')) and norm(item['category'])==CATEGORY and norm(item['transport'])==TRANSPORT for item in records)==1
+                return sum(all(' '.join(item[k].split())==' '.join(row[k].split()) for k in ('date','location','purpose','start','end')) and norm(item['category'])==trip_category(row.get('category')) and norm(item['transport'])==TRANSPORT for item in records)==1
             except StaleElementReferenceException:return False
         self.wait.until(confirmed)
 

@@ -22,17 +22,17 @@ def numbers(name,limit,unit):return sel(name,[(str(n),str(n)+unit) for n in rang
 def trip_page(edit=None):
     saved=trip_records[edit] if edit is not None else None
     form='<form method="post" action="/trip-save">'+inp('nonce','fixture-token') .replace('<input ','<input type="hidden" ',1)
-    form+=sel('kind',[('x','선택'),('center','센터')])+inp('y',2026)+inp('m',10)+inp('d',27)+inp('place','','출장장소')+inp('purpose','','출장목적을 구체적으로 입력하세요')
+    form+=sel('kind',[('x','선택'),('center','센터'),('association','협회')])+inp('y',2026)+inp('m',10)+inp('d',27)+inp('place','','출장장소')+inp('purpose','','출장목적을 구체적으로 입력하세요')
     form+=sel('transport',[('x','선택'),('public','대중교통')])+numbers('sh',24,'시')+numbers('sm',60,'분')+numbers('eh',24,'시')+numbers('em',60,'분')+'<button type="submit">확인</button></form>'
     heads=''.join('<th>'+t+'</th>' for t in ('구분','출장일','출장장소','출장목적','이동수단','출발시간','복귀시간','출장시간'))
-    body=''.join('<tr>'+''.join('<td>'+escape(str(v))+'</td>' for v in ('센터',f"{int(r['date'][5:7])}월 {int(r['date'][8:])}일 (수)",r['location'],r['purpose'],'대중교통',r['start'],r['end'],'시간'))+'</tr>' for r in trip_records)
+    body=''.join('<tr>'+''.join('<td>'+escape(str(v))+'</td>' for v in (r.get('category','센터'),f"{int(r['date'][5:7])}월 {int(r['date'][8:])}일 (수)",r['location'],r['purpose'],'대중교통',r['start'],r['end'],'시간'))+'</tr>' for r in trip_records)
     if saved:
         form=form.replace('action="/trip-save"','action="/trip-update?index='+str(edit)+'"')
         for name,value in dict(y=int(saved['date'][:4]),m=int(saved['date'][5:7]),d=int(saved['date'][8:]),place=saved['location'],purpose=saved['purpose']).items():
             placeholder='출장장소' if name=='place' else '출장목적을 구체적으로 입력하세요' if name=='purpose' else ''
             previous=2026 if name=='y' else 10 if name=='m' else 27 if name=='d' else ''
             form=form.replace(inp(name,previous,placeholder),inp(name,value,placeholder))
-        for name,value in dict(kind='center',transport='public',sh=int(saved['start'][:2]),sm=int(saved['start'][3:]),eh=int(saved['end'][:2]),em=int(saved['end'][3:])).items():
+        for name,value in dict(kind='association' if saved.get('category')=='협회' else 'center',transport='public',sh=int(saved['start'][:2]),sm=int(saved['start'][3:]),eh=int(saved['end'][:2]),em=int(saved['end'][3:])).items():
             a=form.index('<select name="'+name+'">');b=form.index('</select>',a)
             form=form[:a]+form[a:b].replace('value="'+str(value)+'"','value="'+str(value)+'" selected')+form[b:]
         # Reproduce saved option + generated list duplicates on the real site.
@@ -85,8 +85,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         fields={k:v[0] for k,v in parse_qs(self.rfile.read(int(self.headers['Content-Length'])).decode(),keep_blank_values=True).items()}
         if urlsplit(self.path).path in ('/trip-save','/trip-update'):
-            assert fields['kind']=='center' and fields['transport']=='public' and fields['nonce']=='fixture-token'
-            row=dict(date=f"{int(fields['y']):04}-{int(fields['m']):02}-{int(fields['d']):02}",location=fields['place'],purpose=fields['purpose'],start=f"{int(fields['sh']):02}:{int(fields['sm']):02}",end=f"{int(fields['eh']):02}:{int(fields['em']):02}")
+            assert fields['kind'] in ('center','association') and fields['transport']=='public' and fields['nonce']=='fixture-token'
+            row=dict(category='센터' if fields['kind']=='center' else '협회',date=f"{int(fields['y']):04}-{int(fields['m']):02}-{int(fields['d']):02}",location=fields['place'],purpose=fields['purpose'],start=f"{int(fields['sh']):02}:{int(fields['sm']):02}",end=f"{int(fields['eh']):02}:{int(fields['em']):02}")
             if urlsplit(self.path).path=='/trip-update':
                 trip_records[int(parse_qs(urlsplit(self.path).query)['index'][0])]=row;posts.append(('trip-update',row['date']))
             else:trip_records.append(row);posts.append(('trip',row['date']))
@@ -150,12 +150,19 @@ try:
     assert loaded['ready'] and sum(r['selected'] for r in loaded['rows'])==3,loaded
     edits=[dict(r,selected=r['date']=='2026-10-14') for r in loaded['rows']]
     edit=next(r for r in edits if r['selected']);assert edit['location']=='직접 입력 장소' and edit['purpose']=='등록할 목적'
-    edit.update(location='수정한 장소',purpose='수정한 출장 목적',start_hour=12,start_minute=30,start='12:30',end='14:30')
+    edit.update(location='수정한 장소',purpose='수정한 출장 목적',start_hour=12,start_minute=30,start='12:30',end='14:30',category='협회')
     edited=trips.run_job(app,dict(operation='submit',review_id=loaded['review_id'],total=40000,rows=edits))
     assert edited['ok'] and edited['rows'][0]['status']=='수정 확인 완료',edited
+    assert trip_records[-1]['category']=='협회'
     assert len(trip_records)==3 and trip_records[-1]['location']=='수정한 장소' and trip_records[-1]['purpose']=='수정한 출장 목적'
     assert (trip_records[-1]['start'],trip_records[-1]['end'])==('12:30','14:30')
     assert [r for r in posts if r[0]=='trip-update']==[('trip-update','2026-10-14')]
+    export_path=Path(folder)/'2026 출장비지급내역(10월)_.xlsx'
+    exported=trips.run_job(app,dict(operation='export',month='2026-10',template_path=str(ROOT/'app/trip-expenses-template.txt'),output_path=str(export_path),name='시험 사용자',position='대리'))
+    assert exported['ok'] and exported['center_count']==2 and exported['excluded_count']==1 and exported['total_amount']==30000,exported
+    from openpyxl import load_workbook
+    report=load_workbook(export_path,data_only=True).active
+    assert report['B35'].value==30000 and report['D9'].value=='시험 사용자'
     driver,_=connect()
     try:
      from attendance_recovery import AttendancePage
@@ -191,5 +198,5 @@ try:
      assert len(rejected)==1 and rejected[0]['status'].startswith('확인 필요:') and statuses[rows[0]['date']]['status']=='uncertain',rejected
      assert len(ot_records)==3 and ot_records[0]['purpose']=='수정한 새 근무목적'
     finally:driver.quit()
-   print('JOURNAL_BROWSER_OK: attendance month 10→9→10 with native clicks disabled; underfilled schedule details allowed without POST; trip actual header-row edit form without placeholders matched by column; trip existing time/place/purpose updated / no duplicate; trip short-date history after POST verified / no duplicate; trip workflow + unchecked/blank-purpose exclusions and partial-budget warning + work-log direct form + user-supplied direct URL without menu links; overtime purpose absent from list / success page without history / observed-page refresh / two sequential POSTs / existing date purpose updated once / uncertain missing date added / detail purpose verified / no duplicate dates; no target-site requests')
+   print('JOURNAL_BROWSER_OK: attendance month 10→9→10 with native clicks disabled; underfilled schedule details allowed without POST; trip actual header-row edit form without placeholders matched by column; trip existing category/time/place/purpose updated / no duplicate; center-only XLSX export from live history excludes association; trip short-date history after POST verified / no duplicate; trip workflow + unchecked/blank-purpose exclusions and partial-budget warning + work-log direct form + user-supplied direct URL without menu links; overtime purpose absent from list / success page without history / observed-page refresh / two sequential POSTs / existing date purpose updated once / uncertain missing date added / detail purpose verified / no duplicate dates; no target-site requests')
 finally:server.shutdown();server.server_close();thread.join()

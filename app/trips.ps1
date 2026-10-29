@@ -107,11 +107,21 @@ foreach($label in (Get-WorkdayMonthLabels (Get-Date))){[void]$month.Items.Add($l
 $total=New-Object Windows.Forms.NumericUpDown;$total.Location=New-Object Drawing.Point(360,61);$total.Width=145;$total.Maximum=1000;$total.Increment=1;$total.ThousandsSeparator=$true;$form.Controls.Add($total)
 [void](Text-Label '만원 · 예: 20 = 20만원' 515 65 295)
 $scan=Make-Button '출퇴근 일정 조회' 855 55 355
-$note=Text-Label '구분: 센터 / 이동: 대중교통 · 행사 기본 09~18시 / 일반 기본 13~17시 · 휴가 숨김 · 기등록 날짜·금액을 최초 조회부터 표시 · 저장 전 재확인' 20 110 1190
-$grid=New-Object WorkdayTripEntryGrid;$grid.Location=New-Object Drawing.Point(20,155);$grid.Size=New-Object Drawing.Size(1190,370);$grid.Anchor='Top,Bottom,Left,Right'
+$note=Text-Label '출장 구분: 센터·협회 선택 / 이동: 대중교통 · 행사 기본 09~18시 / 일반 기본 13~17시 · 휴가 숨김 · 기등록 날짜·금액을 최초 조회부터 표시 · 저장 전 재확인' 20 150 1190
+[void](Text-Label '성명' 20 114 50)
+$exportName=New-Object Windows.Forms.TextBox;$exportName.Location=New-Object Drawing.Point(75,110);$exportName.Width=150;$form.Controls.Add($exportName)
+[void](Text-Label '직위' 245 114 50)
+$exportPosition=New-Object Windows.Forms.TextBox;$exportPosition.Location=New-Object Drawing.Point(300,110);$exportPosition.Width=120;$exportPosition.Text='대리';$form.Controls.Add($exportPosition)
+$exportButton=Make-Button '센터 출장 엑셀 내보내기' 855 105 355
+$templateButton=Make-Button '엑셀 양식 선택' 445 105 210
+$script:exportTemplatePath=''
+$profilePath=Join-Path $PSScriptRoot 'dist/출장내보내기설정.json'
+try{if(Test-Path -LiteralPath $profilePath){$profile=Get-Content -LiteralPath $profilePath -Raw -Encoding UTF8|ConvertFrom-Json;$exportName.Text=[string]$profile.name;$exportPosition.Text=[string]$profile.position;$script:exportTemplatePath=[string]$profile.template_path}}catch{}
+$grid=New-Object WorkdayTripEntryGrid;$grid.Location=New-Object Drawing.Point(20,190);$grid.Size=New-Object Drawing.Size(1190,335);$grid.Anchor='Top,Bottom,Left,Right'
 $grid.EditMode='EditProgrammatically';$grid.AllowUserToAddRows=$false;$grid.AllowUserToDeleteRows=$false;$grid.RowHeadersVisible=$false;$grid.AutoSizeColumnsMode='Fill';$grid.RowTemplate.Height=32
 $check=New-Object Windows.Forms.DataGridViewCheckBoxColumn;$check.CellTemplate=New-Object WorkdayTripCheckCell;$check.Name='selected';$check.HeaderText='선택';$check.FillWeight=40;[void]$grid.Columns.Add($check)
-foreach($spec in @(@('date','날짜',100),@('weekday','요일',45),@('attendance','출퇴근',115),@('required','구분',145),@('registered','출장 등록',95))){$c=New-Object Windows.Forms.DataGridViewTextBoxColumn;$c.Name=$spec[0];$c.HeaderText=$spec[1];$c.FillWeight=$spec[2];$c.ReadOnly=$true;[void]$grid.Columns.Add($c)}
+foreach($spec in @(@('date','날짜',100),@('weekday','요일',45),@('attendance','출퇴근',115),@('required','일정 구분',145),@('registered','출장 등록',95))){$c=New-Object Windows.Forms.DataGridViewTextBoxColumn;$c.Name=$spec[0];$c.HeaderText=$spec[1];$c.FillWeight=$spec[2];$c.ReadOnly=$true;[void]$grid.Columns.Add($c)}
+$categoryColumn=New-Object Windows.Forms.DataGridViewComboBoxColumn;$categoryColumn.Name='category';$categoryColumn.HeaderText='출장 구분';$categoryColumn.FillWeight=85;$categoryColumn.MinimumWidth=75;$categoryColumn.FlatStyle='Flat';[void]$categoryColumn.Items.Add('센터');[void]$categoryColumn.Items.Add('협회');$grid.Columns.Insert(5,$categoryColumn)
 foreach($spec in @(@('hours','인정시간',70),@('start_hour','출발 시',70),@('start_minute','분',60))){$c=New-Object Windows.Forms.DataGridViewComboBoxColumn;$c.Name=$spec[0];$c.HeaderText=$spec[1];$c.FillWeight=$spec[2];$c.FlatStyle='Flat';$items=if($spec[0] -eq 'hours'){@('2','4')}elseif($spec[0] -eq 'start_hour'){@(0..23|ForEach-Object{[string]$_})}else{@(0..59|ForEach-Object{[string]$_})};foreach($item in $items){[void]$c.Items.Add($item)};[void]$grid.Columns.Add($c)}
 foreach($spec in @(@('end','복귀 (자동·수정)',100),@('amount','금액',90),@('location','출장 장소 (직접 입력)',180),@('purpose','출장 목적 (직접 입력)',300),@('status','상태',200))){$c=New-Object Windows.Forms.DataGridViewTextBoxColumn;$c.Name=$spec[0];$c.HeaderText=$spec[1];$c.FillWeight=$spec[2];$c.ReadOnly=($spec[0] -notin @('end','location','purpose'));[void]$grid.Columns.Add($c)}
 foreach($name in @('selected','date','start_hour','start_minute','end')){$grid.Columns[$name].MinimumWidth=$(if($name -eq 'date'){100}elseif($name -eq 'end'){105}else{48})};$grid.Columns['location'].Visible=$false;$grid.Columns['purpose'].Visible=$false;$form.Controls.Add($grid)
@@ -143,6 +153,7 @@ function Update-Totals {
     if($entry.blocked -or $minute -lt 0 -or ($hours -eq 2 -and (Clock-Minutes $end)-($hour*60+$minute) -ne 120) -or (Clock-Minutes $end) -lt ($hour*60+$minute+$hours*60) -or $hour*60+$minute -lt (Clock-Minutes $entry.checkin) -or (Clock-Minutes $end) -gt (Clock-Minutes $entry.checkout)){$valid=$false}
     if([string]::IsNullOrWhiteSpace([string]$row.Cells['location'].Value) -or [string]::IsNullOrWhiteSpace([string]$row.Cells['purpose'].Value)){$details=$false}
    }
+   $entry|Add-Member -NotePropertyName category -NotePropertyValue ([string]$row.Cells['category'].Value) -Force;
    $entry.selected=[bool]$row.Cells['selected'].Value;$entry.hours=$hours;$entry.start_hour=$hour;$entry|Add-Member -NotePropertyName start_minute -NotePropertyValue $minute -Force;$entry.start=('{0:D2}:{1:D2}' -f $hour,$minute);$entry.end=$end;$entry.amount=$hours*5000
    $entry.location=[string]$row.Cells['location'].Value;$entry.purpose=[string]$row.Cells['purpose'].Value
   }
@@ -163,9 +174,9 @@ function Render-Rows($rows){
  try{
   $grid.Rows.Clear()
   foreach($entry in $rows){
-   $index=$grid.Rows.Add([bool]$entry.selected,$entry.date,$entry.weekday,($entry.checkin+'~'+$entry.checkout),$(if($entry.event_day){'연장근무 제외(행사)'}else{''}),$(if($entry.is_existing){'기등록'}elseif($entry.existing_checked){'미등록'}else{'확인 안 됨'}),[string][int]$entry.hours,[string][int]$entry.start_hour,[string]((Clock-Minutes $entry.start)%60),$entry.end,[int]$entry.amount,$entry.location,$entry.purpose,$entry.status)
+   $index=$grid.Rows.Add([bool]$entry.selected,$entry.date,$entry.weekday,($entry.checkin+'~'+$entry.checkout),$(if($entry.event_day){'연장근무 제외(행사)'}else{''}),$(if($entry.category -in @('센터','협회')){$entry.category}else{'센터'}),$(if($entry.is_existing){'기등록'}elseif($entry.existing_checked){'미등록'}else{'확인 안 됨'}),[string][int]$entry.hours,[string][int]$entry.start_hour,[string]((Clock-Minutes $entry.start)%60),$entry.end,[int]$entry.amount,$entry.location,$entry.purpose,$entry.status)
    $row=$grid.Rows[$index];$row.Tag=$entry
-   foreach($name in @('selected','hours','start_hour','start_minute','end','location','purpose')){$row.Cells[$name].ReadOnly=[bool]$entry.blocked}
+   foreach($name in @('selected','category','hours','start_hour','start_minute','end','location','purpose')){$row.Cells[$name].ReadOnly=[bool]$entry.blocked}
    if($entry.is_existing){$row.Cells['hours'].ReadOnly=$true}
    if($script:stage -eq 2){$row.Cells['hours'].ReadOnly=$true}
   }
@@ -188,7 +199,7 @@ function Open-TripDetails($Result,[scriptblock]$Confirm=$null){
  if($proceed){Change-Stage 2}else{Change-Stage 1}
  return $proceed
 }
-function Entries{@($grid.Rows|ForEach-Object{@{date=[string]$_.Cells['date'].Value;selected=[bool]$_.Cells['selected'].Value;hours=[int]$_.Cells['hours'].Value;start_hour=[int]$_.Cells['start_hour'].Value;start_minute=[int]$_.Cells['start_minute'].Value;end=[string]$_.Cells['end'].Value;location=[string]$_.Cells['location'].Value;purpose=[string]$_.Cells['purpose'].Value}})}
+function Entries{@($grid.Rows|ForEach-Object{@{date=[string]$_.Cells['date'].Value;selected=[bool]$_.Cells['selected'].Value;category=[string]$_.Cells['category'].Value;hours=[int]$_.Cells['hours'].Value;start_hour=[int]$_.Cells['start_hour'].Value;start_minute=[int]$_.Cells['start_minute'].Value;end=[string]$_.Cells['end'].Value;location=[string]$_.Cells['location'].Value;purpose=[string]$_.Cells['purpose'].Value}})}
 function Start-TripJob($job){
  $python=Join-Path $PSScriptRoot 'runtime/python.exe';if(-not(Test-Path -LiteralPath $python)){throw '설치된 프로그램에서 실행하세요.'}
  $root=Join-Path $PSScriptRoot 'dist';New-Item -ItemType Directory -Path $root -Force|Out-Null
@@ -196,8 +207,27 @@ function Start-TripJob($job){
  [IO.File]::WriteAllText($script:jobPath,($job|ConvertTo-Json -Depth 10),(New-Object Text.UTF8Encoding($false)))
  $script:worker=Start-WorkdayHiddenProcess $python "`"$(Join-Path $PSScriptRoot 'main.py')`" --trip-job `"$script:jobPath`"" $PSScriptRoot
  foreach($c in $form.Controls){if($c -ne $status){$c.Enabled=$false}}
- $status.Text=if($job.operation -eq 'allocate'){'선택한 날짜 안에서 시간을 배분 중입니다. 사이트에는 접속하지 않습니다.'}elseif($job.operation -eq 'scan'){'근태관리에서 출퇴근 등록 날짜를 조회 중입니다.'}elseif($job.operation -eq 'inspect'){'선택 완료: 기존 출장 내역을 확인 중입니다. 아직 등록하지 않습니다.'}else{'사이트 처리 중입니다. 등록은 하루씩 확인한 뒤 다음 날짜로 진행합니다.'};$timer.Start()
+ $status.Text=if($job.operation -eq 'allocate'){'선택한 날짜 안에서 시간을 배분 중입니다. 사이트에는 접속하지 않습니다.'}elseif($job.operation -eq 'export'){'선택 월의 등록된 출장 내역을 조회해 센터 기록만 엑셀로 내보내는 중입니다.'}elseif($job.operation -eq 'scan'){'근태관리에서 출퇴근 등록 날짜를 조회 중입니다.'}elseif($job.operation -eq 'inspect'){'선택 완료: 기존 출장 내역을 확인 중입니다. 아직 등록하지 않습니다.'}else{'사이트 처리 중입니다. 등록은 하루씩 확인한 뒤 다음 날짜로 진행합니다.'};$timer.Start()
 }
+function Select-ExportTemplate {
+ $picker=New-Object Windows.Forms.OpenFileDialog;$picker.Filter='출장비 지급내역서 양식 (*.xlsx)|*.xlsx';$picker.Title='원본 출장비 지급내역서 엑셀 선택 (PC에만 보관)'
+ try{if($picker.ShowDialog($form) -ne 'OK'){return $false};$script:exportTemplatePath=$picker.FileName
+  $folder=Split-Path -Parent $profilePath;New-Item -ItemType Directory -Path $folder -Force|Out-Null
+  [IO.File]::WriteAllText($profilePath,(@{name=$exportName.Text.Trim();position=$exportPosition.Text.Trim();template_path=$script:exportTemplatePath}|ConvertTo-Json),(New-Object Text.UTF8Encoding($false)))
+  $status.Text='엑셀 양식 선택 완료: '+[IO.Path]::GetFileName($script:exportTemplatePath);return $true
+ }finally{$picker.Dispose()}
+}
+$templateButton.Add_Click({try{[void](Select-ExportTemplate)}catch{$status.Text=$_.Exception.Message}})
+$exportButton.Add_Click({
+ try{
+  if([string]::IsNullOrWhiteSpace($exportName.Text)){throw '엑셀 문서에 표시할 성명을 입력하세요.'}
+  if(-not $script:exportTemplatePath -or -not(Test-Path -LiteralPath $script:exportTemplatePath)){if(-not(Select-ExportTemplate)){return}}
+  $selectedMonth=Selected-Month;$day=[DateTime]::ParseExact($selectedMonth+'-01','yyyy-MM-dd',[Globalization.CultureInfo]::InvariantCulture)
+  $dialog=New-Object Windows.Forms.SaveFileDialog;$dialog.Filter='Excel 통합 문서 (*.xlsx)|*.xlsx';$dialog.DefaultExt='xlsx';$dialog.AddExtension=$true;$dialog.OverwritePrompt=$true
+  $dialog.FileName=('{0} 출장비지급내역({1}월)_.xlsx' -f $day.Year,$day.Month)
+  try{if($dialog.ShowDialog($form) -eq 'OK'){Start-TripJob @{operation='export';month=$selectedMonth;output_path=$dialog.FileName;name=$exportName.Text.Trim();position=$exportPosition.Text.Trim();template_path=$script:exportTemplatePath}}}finally{$dialog.Dispose()}
+ }catch{[void][Windows.Forms.MessageBox]::Show($form,$_.Exception.Message,'엑셀 내보내기','OK','Information')}
+})
 $scan.Add_Click({try{$script:reviewId=$null;Start-TripJob @{operation='scan';month=(Selected-Month);total=(Target-Amount)}}catch{$status.Text=$_.Exception.Message}})
 $allocate.Add_Click({try{[void]$grid.EndEdit();Start-TripJob @{operation='allocate';review_id=$script:reviewId;total=(Target-Amount);rows=@(Entries)}}catch{$status.Text=$_.Exception.Message}})
 $complete.Add_Click({try{[void]$grid.EndEdit();Update-Totals;if($complete.Enabled){Start-TripJob @{operation='inspect';review_id=$script:reviewId;total=(Target-Amount);rows=@(Entries)}}}catch{$status.Text=$_.Exception.Message}})
@@ -247,7 +277,9 @@ $timer.Add_Tick({
  try{
   $result=Get-Content -LiteralPath ($script:jobPath+'.result.json') -Raw -Encoding UTF8|ConvertFrom-Json
   if($result.summary){$script:existing=[int]$result.summary.existing_amount}
-  if($script:operation -eq 'submit'){
+  if($script:operation -eq 'export'){
+   if($result.ok){[IO.File]::WriteAllText($profilePath,(@{name=$exportName.Text.Trim();position=$exportPosition.Text.Trim();template_path=$script:exportTemplatePath}|ConvertTo-Json),(New-Object Text.UTF8Encoding($false)))}
+  }elseif($script:operation -eq 'submit'){
    $script:reviewId=$null
    if($result.all_rows){$script:allRows=@($result.all_rows);Change-Stage 1}
    elseif($result.rows){foreach($entry in $result.rows){$entry.selected=$false;$entry.blocked=$true};$script:allRows=@($result.rows);Render-Rows $result.rows}
@@ -260,7 +292,7 @@ $timer.Add_Tick({
   if(-not $result.ok){throw $result.error}
   $status.Text=$result.message
   if($script:operation -eq 'submit'){$script:closeAfterSubmit=Test-WorkdaySubmissionComplete $result $script:expectedSubmitCount}
- }catch{$status.Text='처리 확인 필요: '+$_.Exception.Message;if($script:operation -ne 'inspect'){$script:reviewId=$null};$errorTitle=if($script:operation -eq 'scan'){'근태 일정 조회 오류'}elseif($script:operation -eq 'inspect'){'기존 출장 확인 오류'}else{'출장 처리 결과'};[void][Windows.Forms.MessageBox]::Show($form,$status.Text,$errorTitle,'OK','Error')}
+ }catch{$status.Text='처리 확인 필요: '+$_.Exception.Message;if($script:operation -notin @('inspect','export')){$script:reviewId=$null};$errorTitle=if($script:operation -eq 'scan'){'근태 일정 조회 오류'}elseif($script:operation -eq 'inspect'){'기존 출장 확인 오류'}else{'출장 처리 결과'};[void][Windows.Forms.MessageBox]::Show($form,$status.Text,$errorTitle,'OK','Error')}
  finally{
   $script:worker.Dispose();$script:worker=$null;Remove-Item -LiteralPath $script:jobPath,($script:jobPath+'.result.json') -Force -ErrorAction SilentlyContinue
   foreach($c in $form.Controls){$c.Enabled=$true};$grid.Enabled=[bool]$script:reviewId;$total.Enabled=($script:stage -eq 1);$month.Enabled=($script:stage -eq 1);Update-Totals
@@ -332,6 +364,9 @@ if($SelfTest){
  $saved=[PSCustomObject]@{date='2026-10-13';weekday='화';checkin='08:35';checkout='18:00';mandatory=$false;event_day=$false;is_existing=$true;selected=$true;blocked=$false;hours=4;start_hour=13;start='13:00';end='17:00';amount=20000;existing_amount=20000;existing_hours=4;location='저장된 장소';purpose='저장된 목적';status='기존 등록'}
  $script:existing=20000;$script:allRows=@($saved);$total.Value=2;Change-Stage 2
  if(-not $submit.Enabled -or $grid.Rows[0].Cells['selected'].ReadOnly -or $grid.Rows[0].Cells['location'].ReadOnly -or $grid.Rows[0].Cells['start_hour'].ReadOnly){throw '기존 출장 수정/금액 중복 합산 검사 실패'}
+ if($grid.Rows[0].Cells['category'].Value -ne '센터'){throw '출장 구분 기본값 오류'}
+ $grid.Rows[0].Cells['category'].Value='협회';Update-Totals
+ if((@(Entries))[0].category -ne '협회'){throw '출장 구분 수정 전달 실패'}
  if($grid.Rows[0].Cells['registered'].Value -ne '기등록'){throw '기등록 날짜 표시 실패'}
  if($grid.Rows[0].Cells['location'].Value -ne '저장된 장소' -or $grid.Rows[0].Cells['purpose'].Value -ne '저장된 목적'){throw '기존 장소·목적 불러오기 실패'}
 
