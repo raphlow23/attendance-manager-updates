@@ -218,22 +218,59 @@ class TripPage:
             raise RuntimeError('다른 사이트의 삭제 버튼은 실행하지 않습니다.')
         guard=getattr(self.driver,'_workday_before_write',None)
         if callable(guard):guard()
+        list_url=self.driver.current_url
+        confirmations=0
+        def confirm_dialog():
+            nonlocal confirmations
+            try:
+                self.driver.switch_to.alert.accept()
+                confirmations+=1
+                return True
+            except NoAlertPresentException:pass
+            # Only an open, deletion-specific dialog may supply a second button.
+            # Never click the new-trip form's unrelated '확인' button.
+            dialogs=visible(self.driver.find_elements(By.CSS_SELECTOR,
+                'dialog[open],[role="dialog"],.swal2-popup,.swal-modal,.modal.show'))
+            dialogs=[d for d in dialogs if '삭제' in d.text]
+            if len(dialogs)!=1:return False
+            controls=visible(dialogs[0].find_elements(By.CSS_SELECTOR,'button,input[type="button"],input[type="submit"]'))
+            buttons=[c for c in controls if norm(label(c)) in ('확인','삭제','삭제하기','예','네')]
+            if len(buttons)!=1:return False
+            self.driver.execute_script('arguments[0].click()',buttons[0])
+            confirmations+=1
+            return True
         self.phase='해당 날짜 삭제 버튼 실행'
+        self.driver.execute_script('arguments[0].scrollIntoView({block:"center"})',button)
         self.driver._workday_write_submitted=True
-        try:self.driver.execute_script('arguments[0].click()',button)
+        try:button.click()
         except UnexpectedAlertPresentException:pass
         self.phase='사이트 출장 삭제 결과 확인'
         def absent(_):
             try:
-                try:
-                    self.driver.switch_to.alert.accept()
-                    return False  # Allow confirmation-triggered navigation or a second alert to finish.
-                except NoAlertPresentException:pass
+                if confirm_dialog():return False
                 check=getattr(self.driver,'_workday_check_response',None)
                 if callable(check):check()
                 return not any(r['date']==expected['date'] for r in self.existing(month))
             except (StaleElementReferenceException,UnexpectedAlertPresentException):return False
-        self.wait.until(absent)
+        try:self.wait.until(absent)
+        except TimeoutException as error:
+            # A deletion may be saved while the old table remains on screen.
+            # Re-read the observed list URL once, without repeating the delete.
+            try:
+                if confirm_dialog():
+                    self.wait.until(absent)
+                    return
+                current=urlsplit(self.driver.current_url)
+                if (current.scheme,current.netloc)!=(source.scheme,source.netloc):
+                    raise RuntimeError('삭제 후 다른 사이트로 이동했습니다. 로그인 상태를 확인하고 재조회하세요.') from error
+                self.phase='출장 삭제 후 원래 목록 한 번 재조회'
+                self.driver.get(list_url)
+                self.wait.until(lambda _:self.form())
+                records=self.existing(month)
+                if not any(r['date']==expected['date'] for r in records):return
+            except (UnexpectedAlertPresentException,TimeoutException) as fresh_error:
+                raise RuntimeError(f'삭제 확인창 {confirmations}개 처리 후 목록 재조회를 확인하지 못했습니다. 삭제를 반복하지 않았습니다. 사이트에서 해당 날짜를 확인하세요.') from fresh_error
+            raise RuntimeError(f'삭제 확인창 {confirmations}개 처리 후 목록을 다시 조회했지만 {expected["date"]} 기록이 남아 있습니다. 삭제는 완료되지 않았습니다. 확인창 종류 또는 사이트 메시지 확인이 필요합니다.') from error
     def submit(self,row,month,update=False):
         self.driver._workday_write_submitted=False
         self.phase='기존 출장 행 확인' if update else '신규 출장 입력 폼 확인'

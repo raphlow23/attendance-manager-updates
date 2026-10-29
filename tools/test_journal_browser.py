@@ -119,9 +119,10 @@ try:
   with patch.object(app,'DATA_DIR',folder),patch.object(app,'STATE_FILE',str(Path(folder)/'state.json')),patch.object(app,'SETTINGS_FILE',str(Path(folder)/'settings.json')),patch.object(app,'LOG_FILE',str(Path(folder)/'events.log')):
    app.save_json(app.SETTINGS_FILE,{'id':'fixture','pw':'fixture'});app.save_json(app.STATE_FILE,{'day_rules':{'2026-10-07':{'exclude_overtime':True}}})
    attendance=[dict(date='2026-10-07',checkin='09:00',checkout='18:00',note=''),dict(date='2026-10-13',checkin='08:35',checkout='18:00',note='')]
+   original_click=WebElement.click
    original=WebElement.get_attribute
    def initial_value(element,name):return element.get_dom_attribute(name) if name=='value' else original(element,name)
-   with patch.object(WebElement,'click',lambda self:None),patch.object(WebElement,'send_keys',lambda self,*args:None),patch.object(WebElement,'get_attribute',initial_value),patch('monthly_reconcile._connect',side_effect=connect),patch('monthly_reconcile._read_month',return_value=attendance):
+   with patch.object(WebElement,'click',lambda self:original_click(self) if self.text.strip()=='삭제' else None),patch.object(WebElement,'send_keys',lambda self,*args:None),patch.object(WebElement,'get_attribute',initial_value),patch('monthly_reconcile._connect',side_effect=connect),patch('monthly_reconcile._read_month',return_value=attendance):
     review=trips.run_job(app,dict(operation='scan',month='2026-10',total=30000))
     chosen=[]
     for row in review['rows']:chosen.append(dict(date=row['date'],selected=True,hours=4 if row.get('event_day') else 2,start_hour=9,location='장소 '+row['date'],purpose='직접  입력한 출장 목적'))
