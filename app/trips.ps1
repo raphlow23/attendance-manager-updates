@@ -206,7 +206,7 @@ function Entries{@($grid.Rows|ForEach-Object{@{date=[string]$_.Cells['date'].Val
 function Start-TripJob($job){
  $python=Join-Path $PSScriptRoot 'runtime/python.exe';if(-not(Test-Path -LiteralPath $python)){throw '설치된 프로그램에서 실행하세요.'}
  $root=Join-Path $PSScriptRoot 'dist';New-Item -ItemType Directory -Path $root -Force|Out-Null
- $script:jobPath=Join-Path $root ('trip-job-'+[Guid]::NewGuid().ToString('N')+'.json');$script:operation=$job.operation;$script:closeAfterSubmit=$false;$script:expectedSubmitCount=@($job.rows|Where-Object{($_.selected -and -not [string]::IsNullOrWhiteSpace($_.purpose)) -or $_.pending_delete}).Count
+ $script:jobPath=Join-Path $root ('trip-job-'+[Guid]::NewGuid().ToString('N')+'.json');$script:operation=$job.operation;$script:notifyAfterSubmit=$false;$script:expectedSubmitCount=@($job.rows|Where-Object{($_.selected -and -not [string]::IsNullOrWhiteSpace($_.purpose)) -or $_.pending_delete}).Count
  [IO.File]::WriteAllText($script:jobPath,($job|ConvertTo-Json -Depth 10),(New-Object Text.UTF8Encoding($false)))
  $script:worker=Start-WorkdayHiddenProcess $python "`"$(Join-Path $PSScriptRoot 'main.py')`" --trip-job `"$script:jobPath`"" $PSScriptRoot
  foreach($c in $form.Controls){if($c -ne $status){$c.Enabled=$false}}
@@ -290,7 +290,8 @@ $timer.Add_Tick({
    if($result.rows){$script:allRows=@($result.rows);Change-Stage 1}
   }elseif($script:operation -eq 'submit'){
    $script:reviewId=$null
-   if($result.all_rows){$script:allRows=@($result.all_rows);Change-Stage 1}
+   if(Test-WorkdaySubmissionComplete $result $script:expectedSubmitCount){$script:completedRows=@($result.all_rows|Where-Object{$null -ne $_})}
+   elseif($result.all_rows){$script:allRows=@($result.all_rows);Change-Stage 1}
    elseif($result.rows){foreach($entry in $result.rows){$entry.selected=$false;$entry.blocked=$true};$script:allRows=@($result.rows);Render-Rows $result.rows}
   }elseif($result.ok){
    $script:reviewId=$result.review_id;$script:allRows=@($result.rows)
@@ -300,13 +301,16 @@ $timer.Add_Tick({
   }
   if(-not $result.ok){throw $result.error}
   $status.Text=$result.message
-  if($script:operation -eq 'submit'){$script:closeAfterSubmit=Test-WorkdaySubmissionComplete $result $script:expectedSubmitCount}
+  if($script:operation -eq 'submit'){$script:notifyAfterSubmit=Test-WorkdaySubmissionComplete $result $script:expectedSubmitCount}
  }catch{$status.Text='처리 확인 필요: '+$_.Exception.Message;if($script:operation -notin @('inspect','export')){$script:reviewId=$null};$errorTitle=if($script:operation -eq 'scan'){'근태 일정 조회 오류'}elseif($script:operation -eq 'inspect'){'기존 출장 확인 오류'}else{'출장 처리 결과'};[void][Windows.Forms.MessageBox]::Show($form,$status.Text,$errorTitle,'OK','Error')}
  finally{
   $script:worker.Dispose();$script:worker=$null;Remove-Item -LiteralPath $script:jobPath,($script:jobPath+'.result.json') -Force -ErrorAction SilentlyContinue
   foreach($c in $form.Controls){$c.Enabled=$true};$grid.Enabled=[bool]$script:reviewId;$total.Enabled=($script:stage -eq 1);$month.Enabled=($script:stage -eq 1);Update-Totals
  }
- if($script:closeAfterSubmit){$form.Close()}
+ if($script:notifyAfterSubmit){
+  [void][Windows.Forms.MessageBox]::Show($form,'수정 등록이 완료되었습니다. 첫 화면에서 등록된 센터 출장 기록을 엑셀로 내보낼 수 있습니다.','출장 정리 완료','OK','Information')
+  $script:allRows=@($script:completedRows);Change-Stage 1;$grid.Enabled=$false;$status.Text=$result.message
+ }
 })
 $form.Add_FormClosing({if($script:worker){$_.Cancel=$true;$status.Text='진행 중인 처리가 끝난 뒤 닫아 주세요.'}})
 . (Join-Path $PSScriptRoot 'theme.ps1');Set-UiTheme $form;$submit.BackColor=$script:UiOrange
