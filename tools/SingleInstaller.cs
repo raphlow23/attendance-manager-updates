@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -10,7 +10,7 @@ using System.Threading;
 using System.Windows.Forms;
 [assembly: AssemblyTitle("출근정리 설치")]
 [assembly: AssemblyProduct("출근정리")]
-[assembly: AssemblyVersion("1.6.3.0")]
+[assembly: AssemblyVersion("1.6.4.0")]
 
 public static class AttendanceSetup {
     const string ExpectedHash = "__PAYLOAD_SHA256__";

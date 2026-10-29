@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param([switch]$SelfTest, [long]$OwnerHandle = 0, [string]$PreviewPath)
 
 $ErrorActionPreference = "Stop"
@@ -271,7 +271,8 @@ $saveButton.BackColor = $script:UiMint
 $pauseButton.BackColor = $script:UiBackground
 $resumeButton.BackColor=$script:UiBackground
 $deleteButton.BackColor = [Drawing.ColorTranslator]::FromHtml('#F1E9E3')
-$status.BackColor = [Drawing.ColorTranslator]::FromHtml('#EDF6F0')
+$status.BackColor = [Drawing.Color]::Transparent
+$status.Location=New-Object Drawing.Point(24,60);$status.Size=New-Object Drawing.Size(451,56)
 $status.Text = '예약 작업 상태를 확인하는 중…'
 function Sync-ControlSelection {
  if(Test-Path -LiteralPath $SettingsFile){
@@ -282,6 +283,8 @@ Sync-ControlSelection
 
 if ($SelfTest) {
     if($PreviewPath){$idBox.Text='예시계정';$pwBox.Clear();$status.Text='자동출근: 사용 중 / 자동퇴근: 사용 중';[WorkdaySoftTheme]::SetSelected($resumeButton,$true);Write-UiPreview $form $PreviewPath}
+    $idWell=[Drawing.Rectangle]::Inflate($idBox.Bounds,3,4)
+    if($status.Bounds.IntersectsWith($idWell)){throw '상태 표시와 로그인 입력칸이 겹칩니다.'}
     foreach ($control in $form.Controls) {
         if ($control.Right -gt $form.ClientSize.Width -or $control.Bottom -gt $form.ClientSize.Height) { throw '관리 화면 컨트롤이 창 경계를 벗어났습니다.' }
     }

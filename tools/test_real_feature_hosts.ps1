@@ -1,4 +1,4 @@
-﻿$ErrorActionPreference='Stop'
+$ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 $taskRoot=Split-Path -Parent $PSScriptRoot
@@ -21,6 +21,9 @@ foreach($name in @('control.ps1','corrections.ps1','overtime.ps1','trips.ps1','s
  $source=[regex]::Replace($source,'(?m)^(?=try \{ Show-WorkdayDialog|Show-WorkdayDialog)',($prefix+"`r`n"))
  [IO.File]::WriteAllText((Join-Path $fixture $name),$source,(New-Object Text.UTF8Encoding($true)))
 }
+# The launcher loads the shared theme before starting its STA feature hosts.
+# Match that order so parallel warm-up never races Add-Type initialization.
+. (Join-Path $fixture 'theme.ps1')
 $hosts=New-WorkdayFeatureHosts $fixture
 try{
  $metrics=@()
@@ -38,4 +41,7 @@ try{
   $metrics+=($name+':'+[int]([TimeSpan]::FromTicks($shown.shown-$start.Ticks).TotalMilliseconds)+'ms')
  }
  Write-Output ('REAL_FEATURE_HOSTS_OK: actual forms; no account or website action; '+($metrics -join ', '))
+}catch{
+ Write-Output ('REAL_FEATURE_HOSTS_FAILED: '+($_ | Out-String))
+ throw
 }finally{Close-WorkdayFeatureHosts $hosts}

@@ -1,4 +1,4 @@
-﻿# Light grey raised surfaces and muted blue from the supplied reference.
+# Cached pastel backdrop and frosted glass surfaces; native input behavior is preserved.
 function Write-UiPreview($Window, [string]$Path) {
     if (-not $Path) { return }
     $Window.CreateControl()
@@ -19,7 +19,7 @@ function Write-UiPreview($Window, [string]$Path) {
             $background = New-Object Drawing.SolidBrush($backColor)
             $ink = New-Object Drawing.SolidBrush($child.ForeColor)
             try {
-                $Graphics.FillRectangle($background, $rect)
+                if($child -is [Windows.Forms.Panel] -or $child -is [Windows.Forms.GroupBox]){[WorkdaySoftTheme]::Glass($Graphics,$Window,$rect,20,$false,155)}elseif($child -isnot [Windows.Forms.Button]){$Graphics.FillRectangle($background,$rect)}
                 if ($child -is [Windows.Forms.DataGridView]) {
                     $headerBrush = New-Object Drawing.SolidBrush($child.ColumnHeadersDefaultCellStyle.BackColor)
                     $whiteBrush = New-Object Drawing.SolidBrush($child.ColumnHeadersDefaultCellStyle.ForeColor)
@@ -43,7 +43,6 @@ function Write-UiPreview($Window, [string]$Path) {
                         }
                     } finally { $headerBrush.Dispose(); $whiteBrush.Dispose(); $cellInk.Dispose() }
                 } elseif($child -is [Windows.Forms.Button]) {
-                    [WorkdaySoftTheme]::SurfacePaint($Graphics,$rect,14,$Parent.BackColor,$true)
                     [WorkdaySoftTheme]::PreviewButton($Graphics,$rect,$child)
                 } elseif ($child -isnot [Windows.Forms.Panel] -and $child -isnot [Windows.Forms.GroupBox]) {
                     $text = $child.Text
@@ -88,19 +87,60 @@ public static class WorkdaySoftTheme {
  static GraphicsPath Round(RectangleF r,float radius){GraphicsPath p=new GraphicsPath();float d=Math.Min(radius*2,Math.Min(r.Width,r.Height));if(d<=0){p.AddRectangle(r);return p;}p.AddArc(r.X,r.Y,d,d,180,90);p.AddArc(r.Right-d,r.Y,d,d,270,90);p.AddArc(r.Right-d,r.Bottom-d,d,d,0,90);p.AddArc(r.X,r.Bottom-d,d,d,90,90);p.CloseFigure();return p;}
  static readonly MethodInfo State=typeof(Control).GetMethod("GetState",BindingFlags.NonPublic|BindingFlags.Instance);
  public static bool OwnVisible(Control c){return State==null?true:(bool)State.Invoke(c,new object[]{2});}
+ class Scene:IDisposable{
+  public Bitmap Image,Frosted;public Size Size;
+  public void Dispose(){if(Image!=null){Image.Dispose();Image=null;}if(Frosted!=null){Frosted.Dispose();Frosted=null;}}
+ }
+ static ConditionalWeakTable<Form,Scene> Scenes=new ConditionalWeakTable<Form,Scene>();
+ static void Glow(Graphics g,RectangleF area,Color color){using(var p=new GraphicsPath()){p.AddEllipse(area);using(var brush=new PathGradientBrush(p)){brush.CenterColor=color;brush.SurroundColors=new Color[]{Color.FromArgb(0,color)};g.FillPath(brush,p);}}}
+ static Bitmap SceneImage(Form form){
+  var scene=Scenes.GetValue(form,f=>{var item=new Scene();f.Disposed+=(a,b)=>item.Dispose();return item;});
+  Size size=form.ClientSize;if(size.Width<1||size.Height<1)return null;
+  if(scene.Image!=null&&scene.Size==size)return scene.Image;
+  scene.Dispose();scene.Size=size;scene.Image=new Bitmap(size.Width,size.Height,System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
+  using(var g=Graphics.FromImage(scene.Image)){
+   g.SmoothingMode=SmoothingMode.AntiAlias;using(var brush=new LinearGradientBrush(new Rectangle(Point.Empty,size),Color.FromArgb(190,209,227),Color.FromArgb(218,229,240),90f))g.FillRectangle(brush,new Rectangle(Point.Empty,size));
+   float w=size.Width,h=size.Height;
+   Glow(g,new RectangleF(-w*.45f,-h*.28f,w*1.45f,h*.9f),Color.FromArgb(235,242,177,121));
+   Glow(g,new RectangleF(w*.28f,-h*.18f,w*1.3f,h*.92f),Color.FromArgb(140,144,164,196));
+   Glow(g,new RectangleF(-w*.4f,h*.32f,w*1.25f,h*.92f),Color.FromArgb(210,240,180,127));
+   Glow(g,new RectangleF(w*.32f,h*.55f,w*1.1f,h*.75f),Color.FromArgb(100,177,202,217));
+   using(var wash=new SolidBrush(Color.FromArgb(40,255,255,255)))g.FillRectangle(wash,new Rectangle(Point.Empty,size));
+  }
+  // Cache a further diffused version for card surfaces. Native text remains
+  // outside this bitmap, so only the backdrop is softened.
+  scene.Frosted=new Bitmap(size.Width,size.Height,System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
+  using(var small=new Bitmap(Math.Max(1,size.Width/18),Math.Max(1,size.Height/18))){
+   using(var g=Graphics.FromImage(small)){g.InterpolationMode=InterpolationMode.HighQualityBilinear;g.DrawImage(scene.Image,new Rectangle(Point.Empty,small.Size));}
+   using(var g=Graphics.FromImage(scene.Frosted)){g.InterpolationMode=InterpolationMode.HighQualityBicubic;g.DrawImage(small,new Rectangle(Point.Empty,size));}
+  }return scene.Image;
+ }
+ static Point SceneOrigin(Control control){Point origin=Point.Empty;for(Control c=control;c!=null&&!(c is Form);c=c.Parent){origin.Offset(c.Left,c.Top);}return origin;}
+ public static void DrawScene(Graphics g,Control control){DrawBackdrop(g,control,false);}
+ static void DrawBackdrop(Graphics g,Control control,bool frosted){var form=control as Form??control.FindForm();if(form==null)return;var image=SceneImage(form);if(image==null)return;Scene scene;if(frosted&&Scenes.TryGetValue(form,out scene)&&scene.Frosted!=null)image=scene.Frosted;Point origin=SceneOrigin(control);g.DrawImageUnscaled(image,-origin.X,-origin.Y);}
+ static void Shadow(Graphics g,RectangleF r,float radius){for(int i=5;i>=1;i--){var shadow=r;shadow.Offset(0,i*.8f);shadow.Inflate(i*.3f,i*.2f);using(var p=Round(shadow,radius))using(var fill=new SolidBrush(Color.FromArgb(4,65,78,116)))g.FillPath(fill,p);}}
+ public static void Glass(Graphics g,Control context,RectangleF r,float radius,bool shadow,int white){
+  if(r.Width<2||r.Height<2)return;var state=g.Save();g.SmoothingMode=SmoothingMode.AntiAlias;if(shadow)Shadow(g,r,radius);
+  using(var p=Round(r,radius)){
+   g.SetClip(p,CombineMode.Intersect);DrawBackdrop(g,context,true);
+   using(var wash=new LinearGradientBrush(r,Color.FromArgb(Math.Min(255,white+30),255,255,255),Color.FromArgb(white,247,250,255),100f))g.FillPath(wash,p);
+   using(var sheen=new LinearGradientBrush(new RectangleF(r.X,r.Y,r.Width,Math.Max(2,r.Height*.34f)),Color.FromArgb(36,255,255,255),Color.FromArgb(0,255,255,255),90f))g.FillRectangle(sheen,r.X,r.Y,r.Width,r.Height*.34f);
+   g.Restore(state);g.SmoothingMode=SmoothingMode.AntiAlias;
+   using(var rim=new Pen(Color.FromArgb(210,255,255,255),1))g.DrawPath(rim,p);
+  }
+ }
  public static void SurfacePaint(Graphics g,RectangleF r,float radius,Color color,bool raised){
-  if(r.Width<2||r.Height<2)return;g.SmoothingMode=SmoothingMode.AntiAlias;
-  if(raised)for(int i=5;i>=1;i--){RectangleF light=r;light.Offset(-i*.7f,-i*.7f);RectangleF dark=r;dark.Offset(i*.8f,i*.8f);using(var p=Round(dark,radius))using(var b=new SolidBrush(Color.FromArgb(8,112,126,136)))g.FillPath(b,p);using(var p=Round(light,radius))using(var b=new SolidBrush(Color.FromArgb(22,255,255,255)))g.FillPath(b,p);}
-  using(var p=Round(r,radius))using(var b=new LinearGradientBrush(r,Mix(color,Color.White,color.GetBrightness()<.64f?.04f:.18f),color.GetBrightness()<.64f?Mix(color,Ink,.55f):Mix(color,Surface,.08f),90f))using(var pen=new Pen(Color.FromArgb(160,255,255,255),1)){g.FillPath(b,p);g.DrawPath(pen,p);}
+  if(r.Width<2||r.Height<2)return;g.SmoothingMode=SmoothingMode.AntiAlias;if(raised)Shadow(g,r,radius);
+  bool dark=color.GetBrightness()<.64f;
+  using(var p=Round(r,radius))using(var brush=new LinearGradientBrush(r,Mix(color,Color.White,dark?.07f:.35f),dark?Mix(color,Ink,.22f):Mix(color,Surface,.1f),95f)){
+   g.FillPath(brush,p);var state=g.Save();g.SetClip(p,CombineMode.Intersect);
+   using(var light=new LinearGradientBrush(new RectangleF(r.X,r.Y,r.Width,Math.Max(2,r.Height*.42f)),Color.FromArgb(dark?24:70,255,255,255),Color.FromArgb(0,255,255,255),90f))g.FillRectangle(light,r.X,r.Y,r.Width,r.Height*.42f);
+   g.Restore(state);using(var edge=new Pen(Color.FromArgb(dark?145:220,255,255,255),1))g.DrawPath(edge,p);
+  }
  }
  public static void Inset(Graphics g,RectangleF r,float radius,Color color){
-  if(r.Width<2||r.Height<2)return;var save=g.Save();g.SmoothingMode=SmoothingMode.AntiAlias;
-  using(var path=Round(r,radius)){using(var fill=new SolidBrush(color))g.FillPath(fill,path);g.SetClip(path,CombineMode.Intersect);
-   for(int i=4;i>=1;i--){var dark=r;dark.Offset(i*.8f,i*.8f);var light=r;light.Offset(-i*.8f,-i*.8f);
-    using(var p=Round(dark,radius))using(var pen=new Pen(Color.FromArgb(20,65,91,113),2))g.DrawPath(pen,p);
-    using(var p=Round(light,radius))using(var pen=new Pen(Color.FromArgb(70,255,255,255),2))g.DrawPath(pen,p);
-   }
-  }g.Restore(save);
+  SurfacePaint(g,r,radius,Mix(color,Ink,color.GetBrightness()<.64f?.08f:.045f),false);
+  using(var p=Round(RectangleF.Inflate(r,-1,-1),Math.Max(2,radius-1)))using(var pen=new Pen(Color.FromArgb(45,67,94,122),1.5f))g.DrawPath(pen,p);
  }
  class ButtonState{public ButtonState(){} public bool Down,Hover,Selected;}
  static ConditionalWeakTable<Button,ButtonState> Buttons=new ConditionalWeakTable<Button,ButtonState>();
@@ -109,7 +149,7 @@ public static class WorkdaySoftTheme {
  public static void ButtonPaint(Graphics g,Rectangle r,Button b,bool pressed,bool hover){
   RectangleF face=new RectangleF(r.X+1,r.Y+1,r.Width-3,r.Height-3);Color fill=b.Enabled?b.BackColor:Surface;
   if(pressed)fill=Mix(fill,Ink,.10f);else if(hover)fill=Mix(fill,Color.White,.10f);
-  if(pressed||IsPressed(b))Inset(g,face,Math.Min(14,r.Height/3),fill);else SurfacePaint(g,face,Math.Min(14,r.Height/3),fill,false);
+  if(pressed||IsPressed(b))Inset(g,face,Math.Max(2,(r.Height-3)/2f),fill);else if(fill.GetBrightness()>.64f)Glass(g,b,face,Math.Max(2,(r.Height-3)/2f),false,180);else SurfacePaint(g,face,Math.Max(2,(r.Height-3)/2f),fill,false);
   Color text=!b.Enabled?Color.FromArgb(126,139,148):(fill.GetBrightness()>.64f?Ink:Color.White);
   Rectangle content=Rectangle.Inflate(r,-5,-2);if(pressed)content.Offset(1,1);
   TextRenderer.DrawText(g,b.Text,b.Font,content,text,TextFormatFlags.HorizontalCenter|TextFormatFlags.VerticalCenter|TextFormatFlags.SingleLine|TextFormatFlags.EndEllipsis);
@@ -117,7 +157,7 @@ public static class WorkdaySoftTheme {
  }
  public static void PreviewButton(Graphics g,RectangleF r,Button b){
   Color fill=b.Enabled?b.BackColor:Surface;
-  var face=new RectangleF(r.X+1,r.Y+1,r.Width-3,r.Height-3);if(IsPressed(b))Inset(g,face,Math.Min(14,r.Height/3),fill);else SurfacePaint(g,face,Math.Min(14,r.Height/3),fill,false);
+  var face=new RectangleF(r.X+1,r.Y+1,r.Width-3,r.Height-3);if(IsPressed(b))Inset(g,face,Math.Max(2,(r.Height-3)/2f),fill);else if(fill.GetBrightness()>.64f)Glass(g,b.FindForm(),face,Math.Max(2,(r.Height-3)/2f),false,180);else SurfacePaint(g,face,Math.Max(2,(r.Height-3)/2f),fill,false);
   Color text=!b.Enabled?Color.FromArgb(126,139,148):(fill.GetBrightness()>.64f?Ink:Color.White);
   using(var brush=new SolidBrush(text))using(var format=new StringFormat()){format.Alignment=StringAlignment.Center;format.LineAlignment=StringAlignment.Center;g.DrawString(b.Text,b.Font,brush,RectangleF.Inflate(r,-5,-2),format);}
  }
@@ -126,7 +166,7 @@ public static class WorkdaySoftTheme {
   b.Paint+=(s,e)=>ButtonPaint(e.Graphics,b.ClientRectangle,b,state.Down,state.Hover);
   b.MouseEnter+=(s,e)=>{state.Hover=true;b.Invalidate();};b.MouseLeave+=(s,e)=>{state.Hover=false;state.Down=false;b.Invalidate();if(b.Parent!=null)b.Parent.Invalidate(Rectangle.Inflate(b.Bounds,8,8));};b.MouseDown+=(s,e)=>{state.Down=true;b.Invalidate();if(b.Parent!=null)b.Parent.Invalidate(Rectangle.Inflate(b.Bounds,8,8));};b.MouseUp+=(s,e)=>{state.Down=false;b.Invalidate();if(b.Parent!=null)b.Parent.Invalidate(Rectangle.Inflate(b.Bounds,8,8));};
   b.EnabledChanged+=(s,e)=>b.Invalidate();b.GotFocus+=(s,e)=>b.Invalidate();b.LostFocus+=(s,e)=>b.Invalidate();
-  EventHandler size=(s,e)=>{var old=b.Region;using(var p=Round(new RectangleF(0,0,b.Width,b.Height),Math.Min(14,b.Height/3)))b.Region=new Region(p);if(old!=null)old.Dispose();};size(b,EventArgs.Empty);b.SizeChanged+=size;
+  EventHandler size=(s,e)=>{var old=b.Region;using(var p=Round(new RectangleF(0,0,b.Width,b.Height),Math.Max(2,(b.Height-1)/2f)))b.Region=new Region(p);if(old!=null)old.Dispose();};size(b,EventArgs.Empty);b.SizeChanged+=size;
  }
  [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern IntPtr FindWindowEx(IntPtr parent,IntPtr after,string name,string text);
  [DllImport("user32.dll")] static extern bool GetClientRect(IntPtr hwnd,out NativeRect r);
@@ -184,12 +224,24 @@ public static class WorkdaySoftTheme {
  public static void Group(GroupBox group){
   string caption=group.Text;group.Text="";
   var label=new Label{Text=caption,TextAlign=ContentAlignment.MiddleCenter,AutoSize=false,BackColor=Color.Transparent,ForeColor=Ink,Location=new Point(10,5),Size=new Size(group.Width-20,24),Anchor=AnchorStyles.Top|AnchorStyles.Left|AnchorStyles.Right};group.Controls.Add(label);
-  group.Paint+=(s,e)=>{e.Graphics.Clear(Surface);SurfacePaint(e.Graphics,new RectangleF(1,1,group.Width-3,group.Height-3),18,Surface,false);};
+
  }
  public static void Container(Control parent){
   if(parent is Panel){EventHandler size=(s,e)=>{var old=parent.Region;using(var p=Round(new RectangleF(0,0,parent.Width,parent.Height),20))parent.Region=new Region(p);if(old!=null)old.Dispose();};size(parent,EventArgs.Empty);parent.SizeChanged+=size;}
   var buffered=typeof(Control).GetProperty("DoubleBuffered",BindingFlags.NonPublic|BindingFlags.Instance);if(buffered!=null)buffered.SetValue(parent,true,null);
-  parent.Paint+=(s,e)=>{if(parent is Form && parent.Controls.Count<8)SurfacePaint(e.Graphics,new RectangleF(14,14,parent.ClientSize.Width-28,parent.ClientSize.Height-28),22,Surface,true);foreach(Control c in parent.Controls){if(!OwnVisible(c))continue;if(c is TextBoxBase||c is ComboBox||c is NumericUpDown||c is DateTimePicker){RectangleF field=new RectangleF(c.Left-3,c.Top-4,c.Width+6,c.Height+8);Inset(e.Graphics,field,10,Color.FromArgb(247,249,250));continue;}if(!(c is Panel||c is GroupBox||c is DataGridView||c is Button))continue;RectangleF r=new RectangleF(c.Left,c.Top,c.Width,c.Height);r.Inflate(c is Button?1:4,c is Button?1:4);if(c is Button && IsPressed((Button)c))Inset(e.Graphics,r,14,Surface);else SurfacePaint(e.Graphics,r,c is Button?Math.Min(15,c.Height/3):18,Surface,true);}};
+  parent.Paint+=(s,e)=>{
+   DrawScene(e.Graphics,parent);
+   if(parent is Panel)Glass(e.Graphics,parent,new RectangleF(1,1,parent.Width-3,parent.Height-3),20,false,155);
+   else if(parent is GroupBox)Glass(e.Graphics,parent,new RectangleF(1,1,parent.Width-3,parent.Height-3),18,false,180);
+   else if(parent is Form && parent.Controls.Count<8)Glass(e.Graphics,parent,new RectangleF(14,14,parent.ClientSize.Width-28,parent.ClientSize.Height-28),22,true,165);
+   foreach(Control c in parent.Controls){
+    if(!OwnVisible(c))continue;
+    if(c is TextBoxBase||c is ComboBox||c is NumericUpDown||c is DateTimePicker){RectangleF field=new RectangleF(c.Left-3,c.Top-4,c.Width+6,c.Height+8);Glass(e.Graphics,parent,field,10,false,238);continue;}
+    RectangleF r=new RectangleF(c.Left,c.Top,c.Width,c.Height);
+    if(c is Button){if(!IsPressed((Button)c))Shadow(e.Graphics,r,Math.Max(2,(c.Height-1)/2f));continue;}
+    if(c is Panel||c is GroupBox||c is DataGridView){r.Inflate(3,3);Glass(e.Graphics,parent,r,20,true,c is DataGridView?230:150);}
+   }
+  };
  }
 }
 "@
@@ -198,8 +250,8 @@ function Set-UiTheme($Window) {
  if (-not (Get-Command Initialize-WorkdayWindows -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'session.ps1') }
  Initialize-WorkdayWindows;Set-WorkdayTaskbarWindow $Window
  $iconPath=Join-Path $PSScriptRoot 'attendance.ico';if(Test-Path -LiteralPath $iconPath){$Window.Icon=New-Object Drawing.Icon($iconPath)}
- $script:UiBackground=[Drawing.ColorTranslator]::FromHtml('#F1F4F5');$script:UiInk=[Drawing.ColorTranslator]::FromHtml('#34475B')
- $script:UiCyan=[Drawing.ColorTranslator]::FromHtml('#52677D');$script:UiMint=[Drawing.ColorTranslator]::FromHtml('#52677D');$script:UiOrange=[Drawing.ColorTranslator]::FromHtml('#52677D')
+ $script:UiBackground=[Drawing.ColorTranslator]::FromHtml('#F3F5FB');$script:UiInk=[Drawing.ColorTranslator]::FromHtml('#2E4058')
+ $script:UiCyan=[Drawing.ColorTranslator]::FromHtml('#318C98');$script:UiMint=[Drawing.ColorTranslator]::FromHtml('#318C98');$script:UiOrange=[Drawing.ColorTranslator]::FromHtml('#318C98')
  $Window.BackColor=$script:UiBackground;$Window.ForeColor=$script:UiInk
  function Apply-SoftControls($parent){
   [WorkdaySoftTheme]::Container($parent)
@@ -210,17 +262,17 @@ function Set-UiTheme($Window) {
     $control.Font=New-Object Drawing.Font('Malgun Gothic',$(if($control.Width -lt 80){9}else{10}),[Drawing.FontStyle]::Bold);$control.Cursor=[Windows.Forms.Cursors]::Hand
     [WorkdaySoftTheme]::ApplyButton($control)
    }elseif($control -is [Windows.Forms.DataGridView]){
-    $control.BackgroundColor=[Drawing.ColorTranslator]::FromHtml('#FAFCFD');$control.BorderStyle='None';$control.EnableHeadersVisualStyles=$false
-    $control.ColumnHeadersDefaultCellStyle.BackColor=[Drawing.ColorTranslator]::FromHtml('#E4ECF2');$control.ColumnHeadersDefaultCellStyle.ForeColor=$script:UiInk
+    $control.BackgroundColor=[Drawing.ColorTranslator]::FromHtml('#FBFCFF');$control.BorderStyle='None';$control.EnableHeadersVisualStyles=$false
+    $control.ColumnHeadersDefaultCellStyle.BackColor=[Drawing.ColorTranslator]::FromHtml('#EEF0FA');$control.ColumnHeadersDefaultCellStyle.ForeColor=$script:UiInk
     $control.ColumnHeadersDefaultCellStyle.SelectionBackColor=[Drawing.ColorTranslator]::FromHtml('#C3D3DF');$control.ColumnHeadersDefaultCellStyle.SelectionForeColor=$script:UiInk
     $control.ColumnHeadersDefaultCellStyle.Alignment='MiddleCenter';$control.ColumnHeadersDefaultCellStyle.WrapMode='False';$control.DefaultCellStyle.Alignment='MiddleCenter';$control.DefaultCellStyle.WrapMode='False';
     foreach($column in $control.Columns){$column.HeaderText=($column.HeaderText -replace '\s+',' ').Trim();$column.HeaderCell.Style.Alignment='MiddleCenter';$column.DefaultCellStyle.Alignment='MiddleCenter';$width=[Windows.Forms.TextRenderer]::MeasureText($column.HeaderText,$control.Font).Width+22;$column.MinimumWidth=[Math]::Max($column.MinimumWidth,$width)}
     $control.Add_EditingControlShowing({param($sender,$args) if($args.Control -is [Windows.Forms.ComboBox]){[WorkdaySoftTheme]::Input($args.Control)}})
     $control.ColumnHeadersHeight=42;$control.DefaultCellStyle.BackColor=[Drawing.ColorTranslator]::FromHtml('#FFFFFF');$control.DefaultCellStyle.ForeColor=$script:UiInk
     $control.DefaultCellStyle.SelectionBackColor=[Drawing.ColorTranslator]::FromHtml('#C8DAE4');$control.DefaultCellStyle.SelectionForeColor=$script:UiInk
-    $control.AlternatingRowsDefaultCellStyle.BackColor=[Drawing.ColorTranslator]::FromHtml('#EAF0F3');$control.GridColor=[Drawing.ColorTranslator]::FromHtml('#DAE2E7')
+    $control.AlternatingRowsDefaultCellStyle.BackColor=[Drawing.ColorTranslator]::FromHtml('#F3F6FC');$control.GridColor=[Drawing.ColorTranslator]::FromHtml('#E5EAF3')
    }elseif($control -is [Windows.Forms.TextBoxBase] -or $control -is [Windows.Forms.ComboBox] -or $control -is [Windows.Forms.NumericUpDown] -or $control -is [Windows.Forms.DateTimePicker]){
-    $control.BackColor=[Drawing.ColorTranslator]::FromHtml('#F7F9FA');$control.ForeColor=$script:UiInk
+    $control.BackColor=[Drawing.ColorTranslator]::FromHtml('#FBFCFE');$control.ForeColor=$script:UiInk
     if($control -is [Windows.Forms.TextBoxBase]){$control.BorderStyle='None';if($control -is [Windows.Forms.TextBox] -and -not $control.Multiline){$control.TextAlign='Center'}}
     if($control -is [Windows.Forms.ComboBox]){$control.FlatStyle='Flat';[WorkdaySoftTheme]::Input($control)}
     if($control -is [Windows.Forms.NumericUpDown]){$control.BorderStyle='None';$control.TextAlign='Center';[WorkdaySoftTheme]::Input($control)}

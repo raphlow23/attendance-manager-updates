@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param([switch]$SelfTest, [string]$PreviewPath)
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
@@ -100,8 +100,8 @@ foreach ($card in @(@(20, '01', '근태 자동관리', "예약 출퇴근 등록`
 . (Join-Path $PSScriptRoot 'theme.ps1')
 Set-UiTheme $form
 $overtime.BackColor = $script:UiOrange
-$security.BackColor = $script:UiInk
-$health.BackColor = $script:UiInk
+$security.BackColor = $script:UiCyan
+$health.BackColor = $script:UiCyan
 $attendance.Location = New-Object Drawing.Point(30,289)
 $trips.BackColor=$script:UiMint
 $attendance.BringToFront(); $corrections.BringToFront(); $overtime.BringToFront();$trips.BringToFront()
